@@ -2,85 +2,352 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Space Shooter</title>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      background-color: #0a0a0a;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      margin: 0;
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
       font-family: Arial, sans-serif;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
     h1 {
+      position: absolute;
+      top: 10px; left: 50%;
+      transform: translateX(-50%);
       color: #ffffff;
-      font-size: 2.5rem;
-      margin-bottom: 20px;
+      font-size: 1.5rem;
       letter-spacing: 4px;
       text-transform: uppercase;
+      pointer-events: none;
+      z-index: 1;
+      text-shadow: 0 0 12px #44aaff;
+      white-space: nowrap;
     }
     canvas {
       display: block;
-      background-color: #000000;
+      position: absolute;
+      top: 0; left: 0;
+    }
+
+    /* ── Mobile HUD ────────────────────────────────────────────────────── */
+    #mobileHUD {
+      display: none;
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* Joystick zone */
+    #joystickZone {
+      position: absolute;
+      left: 20px;
+      bottom: 28px;
+      width: 130px;
+      height: 130px;
+      pointer-events: all;
+      touch-action: none;
+    }
+    #joystickBase {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.07);
+      border: 2px solid rgba(100,180,255,0.35);
+      backdrop-filter: blur(2px);
+    }
+    #joystickKnob {
+      position: absolute;
+      width: 50px; height: 50px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, rgba(120,200,255,0.85), rgba(30,80,200,0.7));
+      border: 2px solid rgba(160,220,255,0.7);
+      box-shadow: 0 0 14px rgba(60,140,255,0.6);
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      transition: box-shadow 0.1s;
+    }
+
+    /* Fire button */
+    #fireBtn {
+      position: absolute;
+      right: 28px;
+      bottom: 38px;
+      width: 82px;
+      height: 82px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, rgba(255,120,60,0.9), rgba(180,30,0,0.8));
+      border: 2.5px solid rgba(255,160,80,0.8);
+      box-shadow: 0 0 18px rgba(255,80,0,0.55);
+      pointer-events: all;
+      touch-action: none;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px;
+      color: #fff;
+      text-shadow: 0 0 8px #ff8800;
+      transition: transform 0.08s, box-shadow 0.08s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #fireBtn:active, #fireBtn.pressed {
+      transform: scale(0.9);
+      box-shadow: 0 0 28px rgba(255,120,0,0.9);
+    }
+
+    /* Pause button */
+    #pauseBtn {
+      position: absolute;
+      right: 14px;
+      top: 14px;
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.1);
+      border: 1.5px solid rgba(180,220,255,0.4);
+      pointer-events: all;
+      touch-action: none;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      color: #fff;
+      -webkit-tap-highlight-color: transparent;
+      backdrop-filter: blur(4px);
     }
   </style>
 </head>
 <body>
   <h1>Space Shooter</h1>
-  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Mobile on-screen controls -->
+  <div id="mobileHUD">
+    <div id="joystickZone">
+      <div id="joystickBase"></div>
+      <div id="joystickKnob"></div>
+    </div>
+    <button id="fireBtn">🔥</button>
+    <button id="pauseBtn">⏸</button>
+  </div>
 
   <script>
     const canvas = document.getElementById('gameCanvas');
     const ctx    = canvas.getContext('2d');
 
-    // ─── Starfield ────────────────────────────────────────────────────────────
-    const NUM_STARS = 160;
-    const stars = [];
-    for (let i = 0; i < NUM_STARS; i++) {
-      stars.push({
-        x:            Math.random() * canvas.width,
-        y:            Math.random() * canvas.height,
-        radius:       Math.random() * 1.5 + 0.3,
-        speed:        Math.random() * 1.2 + 0.2,
-        opacity:      Math.random() * 0.6 + 0.4,
-        twinkleOffset: Math.random() * Math.PI * 2
-      });
+    // ── Resize to fill the full screen ───────────────────────────────────────
+    function resizeCanvas() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', () => {
+      resizeCanvas();
+      // Re-clamp ship after resize
+      if (typeof ship !== 'undefined') {
+        ship.x = Math.min(Math.max(ship.x, ship.width / 2), canvas.width  - ship.width / 2);
+        ship.y = Math.min(Math.max(ship.y, ship.height / 2), canvas.height - ship.height / 2);
+      }
+    });
+
+    // ── Audio state — declared early so keydown can reference it ─────────────
+    let audioCtx   = null;
+    let bgmPlaying = false;
+
+    // ─── Deep Space Background ────────────────────────────────────────────────
+    // Nebula cloud layer — generated once into an offscreen canvas
+    let nebulaCanvas = null;
+    function buildNebulaCanvas() {
+      nebulaCanvas = document.createElement('canvas');
+      nebulaCanvas.width  = canvas.width  || window.innerWidth;
+      nebulaCanvas.height = canvas.height || window.innerHeight;
+      const nc = nebulaCanvas.getContext('2d');
+      // Deep space base gradient
+      const bg = nc.createLinearGradient(0, 0, 0, nebulaCanvas.height);
+      bg.addColorStop(0,    '#00000a');
+      bg.addColorStop(0.35, '#03000f');
+      bg.addColorStop(0.65, '#000510');
+      bg.addColorStop(1,    '#000008');
+      nc.fillStyle = bg;
+      nc.fillRect(0, 0, nebulaCanvas.width, nebulaCanvas.height);
+
+      // Galaxy smear (distant spiral hint)
+      const gx = nebulaCanvas.width  * 0.72;
+      const gy = nebulaCanvas.height * 0.28;
+      const galG = nc.createRadialGradient(gx, gy, 0, gx, gy, nebulaCanvas.width * 0.22);
+      galG.addColorStop(0,   'rgba(200,180,255,0.07)');
+      galG.addColorStop(0.3, 'rgba(120,80,200,0.045)');
+      galG.addColorStop(0.7, 'rgba(60,30,120,0.02)');
+      galG.addColorStop(1,   'rgba(0,0,0,0)');
+      nc.save();
+      nc.translate(gx, gy);
+      nc.rotate(0.38);
+      nc.scale(1.9, 0.55);
+      nc.translate(-gx, -gy);
+      nc.beginPath();
+      nc.arc(gx, gy, nebulaCanvas.width * 0.22, 0, Math.PI * 2);
+      nc.fillStyle = galG;
+      nc.fill();
+      nc.restore();
+
+      // Nebula blobs — coloured gas clouds
+      const nebulae = [
+        { x: 0.18, y: 0.22, rx: 0.28, ry: 0.18, rot: -0.3,  c0: 'rgba(60,0,120,0.13)',  c1: 'rgba(20,0,60,0.04)'  },
+        { x: 0.75, y: 0.55, rx: 0.32, ry: 0.20, rot:  0.5,  c0: 'rgba(0,40,100,0.11)',  c1: 'rgba(0,15,50,0.03)'  },
+        { x: 0.45, y: 0.75, rx: 0.25, ry: 0.15, rot:  0.15, c0: 'rgba(80,0,60,0.10)',   c1: 'rgba(30,0,20,0.03)'  },
+        { x: 0.85, y: 0.12, rx: 0.18, ry: 0.12, rot: -0.6,  c0: 'rgba(0,60,80,0.09)',   c1: 'rgba(0,20,30,0.02)'  },
+        { x: 0.30, y: 0.50, rx: 0.20, ry: 0.13, rot:  0.8,  c0: 'rgba(100,20,0,0.07)',  c1: 'rgba(40,5,0,0.02)'   },
+      ];
+      for (const n of nebulae) {
+        const nx = n.x * nebulaCanvas.width;
+        const ny = n.y * nebulaCanvas.height;
+        const rx = n.rx * nebulaCanvas.width;
+        const ry = n.ry * nebulaCanvas.height;
+        const ng = nc.createRadialGradient(nx, ny, 0, nx, ny, Math.max(rx, ry));
+        ng.addColorStop(0, n.c0);
+        ng.addColorStop(1, n.c1);
+        nc.save();
+        nc.translate(nx, ny); nc.rotate(n.rot); nc.scale(rx / Math.max(rx,ry), ry / Math.max(rx,ry));
+        nc.beginPath();
+        nc.arc(0, 0, Math.max(rx, ry), 0, Math.PI * 2);
+        nc.fillStyle = ng; nc.fill();
+        nc.restore();
+      }
+
+      // Dust band across middle
+      const dustG = nc.createLinearGradient(0, nebulaCanvas.height * 0.42, 0, nebulaCanvas.height * 0.60);
+      dustG.addColorStop(0,   'rgba(255,200,100,0)');
+      dustG.addColorStop(0.5, 'rgba(255,200,100,0.018)');
+      dustG.addColorStop(1,   'rgba(255,200,100,0)');
+      nc.fillStyle = dustG;
+      nc.fillRect(0, nebulaCanvas.height * 0.42, nebulaCanvas.width, nebulaCanvas.height * 0.18);
     }
 
+    // Rebuild nebula when canvas resizes
+    window.addEventListener('resize', () => { nebulaCanvas = null; });
+
+    // ─── Starfield — three parallax layers ────────────────────────────────────
+    // Layer 0: tiny distant stars (fast scroll = near illusion handled by slow speed)
+    // Layer 1: mid stars
+    // Layer 2: bright close stars with cross flares
+    const STAR_LAYERS = [
+      { count: 280, minR: 0.2, maxR: 0.6,  minSpd: 0.15, maxSpd: 0.4,  colors: ['255,255,255','200,210,255','255,240,200'] },
+      { count: 120, minR: 0.5, maxR: 1.1,  minSpd: 0.4,  maxSpd: 0.85, colors: ['255,255,255','180,200,255','255,220,180','200,255,220'] },
+      { count:  40, minR: 1.0, maxR: 2.2,  minSpd: 0.7,  maxSpd: 1.4,  colors: ['255,255,255','160,190,255','255,200,160','150,230,255'] },
+    ];
+    const starLayers = STAR_LAYERS.map(cfg => {
+      const arr = [];
+      for (let i = 0; i < cfg.count; i++) {
+        const col = cfg.colors[Math.floor(Math.random() * cfg.colors.length)];
+        arr.push({
+          x:      Math.random() * (canvas.width  || window.innerWidth),
+          y:      Math.random() * (canvas.height || window.innerHeight),
+          r:      cfg.minR + Math.random() * (cfg.maxR - cfg.minR),
+          speed:  cfg.minSpd + Math.random() * (cfg.maxSpd - cfg.minSpd),
+          col,
+          twinkle: Math.random() * Math.PI * 2,
+          flare:   Math.random() < 0.3   // only some bright stars get cross flare
+        });
+      }
+      return arr;
+    });
+
     function updateStars() {
-      for (const star of stars) {
-        star.y += star.speed;
-        if (star.y > canvas.height) {
-          star.y = 0;
-          star.x = Math.random() * canvas.width;
+      for (const layer of starLayers) {
+        for (const star of layer) {
+          star.y += star.speed;
+          if (star.y > canvas.height + 4) {
+            star.y = -4;
+            star.x = Math.random() * canvas.width;
+          }
         }
       }
     }
 
     function drawStars() {
-      const time = Date.now() / 1000;
-      for (const star of stars) {
-        const twinkle = 0.5 + 0.5 * Math.sin(time * 2.5 + star.twinkleOffset);
-        const alpha   = star.opacity * (0.6 + 0.4 * twinkle);
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-        ctx.fill();
+      if (!nebulaCanvas ||
+          nebulaCanvas.width  !== canvas.width ||
+          nebulaCanvas.height !== canvas.height) {
+        buildNebulaCanvas();
       }
+
+      // 1. Deep space backdrop
+      ctx.drawImage(nebulaCanvas, 0, 0);
+
+      const time = Date.now() / 1000;
+
+      // 2. Three parallax star layers
+      for (let li = 0; li < starLayers.length; li++) {
+        const layer = starLayers[li];
+        for (const star of layer) {
+          const twinkle = 0.55 + 0.45 * Math.sin(time * (1.8 + li * 0.6) + star.twinkle);
+          const alpha   = (0.4 + 0.6 * twinkle) * (li === 0 ? 0.7 : li === 1 ? 0.85 : 1.0);
+
+          // Glow halo for bright layer
+          if (li === 2) {
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.r * 2.8, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(${star.col},${alpha * 0.18})`;
+            ctx.fill();
+          }
+
+          // Star disc
+          ctx.beginPath();
+          ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${star.col},${alpha})`;
+          ctx.fill();
+
+          // Cross-flare for bright stars
+          if (li === 2 && star.flare) {
+            const flen = star.r * (4 + 3 * twinkle);
+            const fa   = alpha * 0.55;
+            ctx.strokeStyle = `rgba(${star.col},${fa})`;
+            ctx.lineWidth   = star.r * 0.5;
+            // Horizontal
+            ctx.beginPath();
+            ctx.moveTo(star.x - flen, star.y);
+            ctx.lineTo(star.x + flen, star.y);
+            ctx.stroke();
+            // Vertical
+            ctx.beginPath();
+            ctx.moveTo(star.x, star.y - flen);
+            ctx.lineTo(star.x, star.y + flen);
+            ctx.stroke();
+            // Diagonal (softer)
+            ctx.strokeStyle = `rgba(${star.col},${fa * 0.4})`;
+            ctx.lineWidth   = star.r * 0.3;
+            const dlen = flen * 0.55;
+            ctx.beginPath();
+            ctx.moveTo(star.x - dlen, star.y - dlen);
+            ctx.lineTo(star.x + dlen, star.y + dlen);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(star.x + dlen, star.y - dlen);
+            ctx.lineTo(star.x - dlen, star.y + dlen);
+            ctx.stroke();
+          }
+        }
+      }
+
+      // 3. Slow-drifting space dust overlay (subtle noise texture)
+      const dustT = (time * 6) % canvas.height;
+      const dustGrad = ctx.createLinearGradient(0, dustT - 40, 0, dustT + 40);
+      dustGrad.addColorStop(0,   'rgba(180,160,255,0)');
+      dustGrad.addColorStop(0.5, 'rgba(180,160,255,0.012)');
+      dustGrad.addColorStop(1,   'rgba(180,160,255,0)');
+      ctx.fillStyle = dustGrad;
+      ctx.fillRect(0, Math.max(0, dustT - 40), canvas.width, 80);
     }
 
     // ─── Player ship ──────────────────────────────────────────────────────────
     const ship = {
       x:          canvas.width / 2,
-      y:          canvas.height - 60,
+      y:          canvas.height - 80,
       width:      40,
       height:     50,
       speed:      5,
-      invincible: 0   // frames of invincibility after being hit
+      invincible: 0
     };
 
     // ─── Input ────────────────────────────────────────────────────────────────
@@ -95,15 +362,301 @@
     });
     document.addEventListener('keyup', (e) => { keys[e.key] = false; });
 
+    // ─── Mobile / Touch input ─────────────────────────────────────────────────
+    const isMobile = () => ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+    // Virtual joystick state
+    const joy = { dx: 0, dy: 0, active: false, id: null, baseX: 0, baseY: 0 };
+    let   touchFiring = false;   // fire button held
+
+    function initMobileHUD() {
+      if (!isMobile()) return;
+      document.getElementById('mobileHUD').style.display = 'block';
+
+      const zone  = document.getElementById('joystickZone');
+      const knob  = document.getElementById('joystickKnob');
+      const fireB = document.getElementById('fireBtn');
+      const pauseB = document.getElementById('pauseBtn');
+      const KNOB_LIMIT = 38; // max px the knob travels from centre
+
+      function getZoneCenter() {
+        const r = zone.getBoundingClientRect();
+        return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+      }
+
+      function updateKnob(tx, ty) {
+        const { cx, cy } = getZoneCenter();
+        let dx = tx - cx, dy = ty - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > KNOB_LIMIT) { dx = dx / dist * KNOB_LIMIT; dy = dy / dist * KNOB_LIMIT; }
+        joy.dx = dx / KNOB_LIMIT;
+        joy.dy = dy / KNOB_LIMIT;
+        knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+      }
+
+      function resetKnob() {
+        joy.dx = 0; joy.dy = 0; joy.active = false; joy.id = null;
+        knob.style.transform = 'translate(-50%, -50%)';
+      }
+
+      zone.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (joy.active) return;
+        const t = e.changedTouches[0];
+        joy.active = true; joy.id = t.identifier;
+        updateKnob(t.clientX, t.clientY);
+        if (!bgmPlaying && !gameOver) startBGM();
+      }, { passive: false });
+
+      zone.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        for (const t of e.changedTouches) {
+          if (t.identifier === joy.id) updateKnob(t.clientX, t.clientY);
+        }
+      }, { passive: false });
+
+      zone.addEventListener('touchend',    (e) => { e.preventDefault(); resetKnob(); }, { passive: false });
+      zone.addEventListener('touchcancel', (e) => { e.preventDefault(); resetKnob(); }, { passive: false });
+
+      // Fire button — held = continuous fire
+      fireB.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        touchFiring = true;
+        fireB.classList.add('pressed');
+        if (!bgmPlaying && !gameOver) startBGM();
+      }, { passive: false });
+      fireB.addEventListener('touchend',    (e) => { e.preventDefault(); touchFiring = false; fireB.classList.remove('pressed'); }, { passive: false });
+      fireB.addEventListener('touchcancel', (e) => { e.preventDefault(); touchFiring = false; fireB.classList.remove('pressed'); }, { passive: false });
+
+      // Pause button
+      pauseB.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (gameOver) { resetGame(); startBGM(); return; }
+        paused = !paused;
+        pauseB.textContent = paused ? '▶' : '⏸';
+        if (paused) stopBGM(); else startBGM();
+      }, { passive: false });
+
+      // Tap anywhere on canvas = restart on game over (mobile convenience)
+      canvas.addEventListener('touchstart', (e) => {
+        if (gameOver) { e.preventDefault(); resetGame(); startBGM(); }
+      }, { passive: false });
+    }
+
+    // Inject touch movement into the existing keys-based update loop
+    function applyTouchMovement() {
+      if (!isMobile()) return;
+      const DEAD = 0.15;
+      const spd  = ship.speed;
+      if (joy.dx >  DEAD) keys['ArrowRight'] = true;  else delete keys['ArrowRight'];
+      if (joy.dx < -DEAD) keys['ArrowLeft']  = true;  else delete keys['ArrowLeft'];
+      if (joy.dy >  DEAD) keys['ArrowDown']  = true;  else delete keys['ArrowDown'];
+      if (joy.dy < -DEAD) keys['ArrowUp']    = true;  else delete keys['ArrowUp'];
+      // Diagonal — apply proportional speed directly for smooth feel
+      if (Math.abs(joy.dx) > DEAD || Math.abs(joy.dy) > DEAD) {
+        ship.x += joy.dx * spd;
+        ship.y += joy.dy * spd;
+      }
+      if (touchFiring) shoot();
+    }
+
+    initMobileHUD();
+
     // ─── Bullets ──────────────────────────────────────────────────────────────
     const bullets        = [];
     const SHOOT_COOLDOWN  = 250; // ms base cooldown
     let   lastShotTime   = 0;
 
+    // ─── Enemy Bullets ────────────────────────────────────────────────────────
+    // Each enemy bullet: { x, y, vx, vy, radius, type }
+    // type 0 = normal enemy (small red bolt)
+    // type 1 = small enemy  (aimed orange bolt)
+    // type 2 = boss         (large purple plasma ball, spread)
+    const enemyBullets = [];
+
+    // Per-enemy shoot cooldown — stored on the enemy object as `nextShot` (timestamp)
+    const ENEMY_SHOOT_BASE    = 2200;  // ms between normal enemy shots
+    const SMALL_ENEMY_SHOOT   = 1400;  // ms between small enemy shots
+    const BOSS_SHOOT_INTERVAL = 900;   // ms between boss burst volleys
+    let   bossNextShot        = 0;
+
+    function enemyShootSound() {
+      ensureAudio();
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(320, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.09, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.13);
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.14);
+    }
+
+    function fireEnemyBullet(ex, ey, targetX, targetY, type) {
+      let vx = 0, vy = 0, radius = 4, speed = 4;
+      if (type === 0) {
+        // Normal enemy — straight down
+        speed = 3.5 + speedMultiplier * 0.6;
+        vx = 0; vy = speed;
+        radius = 4;
+      } else if (type === 1) {
+        // Small enemy — aimed at ship
+        speed = 4.5 + speedMultiplier * 0.7;
+        const dx = targetX - ex, dy = targetY - ey;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        vx = dx / dist * speed; vy = dy / dist * speed;
+        radius = 5;
+      } else if (type === 2) {
+        // Boss — caller sets vx/vy directly via spread; we just store them
+        // This branch is not used directly — boss uses fireEnemyBulletVec
+        radius = 9;
+      }
+      enemyBullets.push({ x: ex, y: ey, vx, vy, radius, type });
+    }
+
+    function fireEnemyBulletVec(ex, ey, vx, vy, radius, type) {
+      enemyBullets.push({ x: ex, y: ey, vx, vy, radius, type });
+    }
+
+    function updateEnemyBullets() {
+      const now = Date.now();
+
+      // — Normal enemies shoot straight down —
+      for (const e of enemies) {
+        if (!e.nextShot) e.nextShot = now + Math.random() * ENEMY_SHOOT_BASE;
+        if (now >= e.nextShot && e.y > 0) {
+          fireEnemyBullet(e.x, e.y + e.size / 2, ship.x, ship.y, 0);
+          enemyShootSound();
+          e.nextShot = now + ENEMY_SHOOT_BASE + Math.random() * 800 - difficultyLevel * 80;
+          e.nextShot = Math.max(e.nextShot, now + 600);
+        }
+      }
+
+      // — Small enemies fire aimed shots —
+      for (const e of smallEnemies) {
+        if (!e.nextShot) e.nextShot = now + Math.random() * SMALL_ENEMY_SHOOT;
+        if (now >= e.nextShot && e.y > 0) {
+          fireEnemyBullet(e.x, e.y + e.size / 2, ship.x, ship.y, 1);
+          enemyShootSound();
+          e.nextShot = now + SMALL_ENEMY_SHOOT + Math.random() * 600 - difficultyLevel * 60;
+          e.nextShot = Math.max(e.nextShot, now + 500);
+        }
+      }
+
+      // — Boss fires spread burst —
+      if (boss && boss.y > 0) {
+        if (now >= bossNextShot) {
+          const spreadCount = 5;
+          const baseSpeed   = 5.5 + speedMultiplier * 0.5;
+          // Fan spread pointing mostly downward
+          for (let i = 0; i < spreadCount; i++) {
+            const angle = (Math.PI * 0.55) * (i / (spreadCount - 1)) + Math.PI * 0.225;
+            const vx    = Math.cos(angle) * baseSpeed;
+            const vy    = Math.sin(angle) * baseSpeed;
+            fireEnemyBulletVec(boss.x, boss.y + boss.size * 0.4, vx, vy, 9, 2);
+          }
+          // Extra aimed shot at player
+          const dx = ship.x - boss.x, dy = ship.y - boss.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          fireEnemyBulletVec(boss.x, boss.y + boss.size * 0.4,
+            dx / dist * baseSpeed * 1.2, dy / dist * baseSpeed * 1.2, 7, 2);
+          enemyShootSound();
+          bossNextShot = now + BOSS_SHOOT_INTERVAL - difficultyLevel * 40;
+          bossNextShot = Math.max(bossNextShot, now + 400);
+        }
+      }
+
+      // — Move all enemy bullets + check ship collision —
+      for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        const b = enemyBullets[i];
+        b.x += b.vx;
+        b.y += b.vy;
+
+        // Off-screen — remove
+        if (b.x < -20 || b.x > canvas.width + 20 ||
+            b.y < -20 || b.y > canvas.height + 20) {
+          enemyBullets.splice(i, 1);
+          continue;
+        }
+
+        // Hit player ship
+        if (ship.invincible === 0) {
+          const dx = b.x - ship.x, dy = b.y - ship.y;
+          const hitR = b.radius + Math.min(ship.width, ship.height) * 0.38;
+          if (dx * dx + dy * dy < hitR * hitR) {
+            spawnParticles(b.x, b.y);
+            enemyBullets.splice(i, 1);
+            loseLife();
+            continue;
+          }
+        }
+      }
+    }
+
+    function drawEnemyBullets() {
+      const now = Date.now();
+      for (const b of enemyBullets) {
+        ctx.save();
+        ctx.translate(b.x, b.y);
+
+        if (b.type === 2) {
+          // Boss plasma ball — glowing purple orb
+          const pulse = 0.7 + 0.3 * Math.sin(now / 100 + b.x);
+          const g = ctx.createRadialGradient(0, 0, 0, 0, 0, b.radius);
+          g.addColorStop(0,   `rgba(255,200,255,${pulse})`);
+          g.addColorStop(0.4, `rgba(200,0,255,${pulse * 0.85})`);
+          g.addColorStop(1,   'rgba(80,0,120,0)');
+          ctx.shadowColor = '#cc00ff';
+          ctx.shadowBlur  = 10 * pulse;
+          ctx.beginPath();
+          ctx.arc(0, 0, b.radius, 0, Math.PI * 2);
+          ctx.fillStyle = g;
+          ctx.fill();
+          // hard bright core
+          ctx.beginPath();
+          ctx.arc(0, 0, b.radius * 0.38, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fill();
+        } else if (b.type === 1) {
+          // Small enemy — orange aimed bolt
+          const angle = Math.atan2(b.vy, b.vx);
+          ctx.rotate(angle - Math.PI / 2);
+          const g = ctx.createLinearGradient(0, -b.radius * 2, 0, b.radius * 2);
+          g.addColorStop(0,   'rgba(255,180,0,0)');
+          g.addColorStop(0.4, 'rgba(255,140,0,0.95)');
+          g.addColorStop(0.6, 'rgba(255,220,80,1)');
+          g.addColorStop(1,   'rgba(255,80,0,0)');
+          ctx.shadowColor = '#ff8800';
+          ctx.shadowBlur  = 8;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, b.radius * 0.55, b.radius * 1.8, 0, 0, Math.PI * 2);
+          ctx.fillStyle = g;
+          ctx.fill();
+        } else {
+          // Normal enemy — red straight bolt
+          const g = ctx.createLinearGradient(0, -b.radius * 2.2, 0, b.radius * 2.2);
+          g.addColorStop(0,   'rgba(255,0,0,0)');
+          g.addColorStop(0.4, 'rgba(255,60,0,0.9)');
+          g.addColorStop(0.6, 'rgba(255,150,80,1)');
+          g.addColorStop(1,   'rgba(200,0,0,0)');
+          ctx.shadowColor = '#ff2200';
+          ctx.shadowBlur  = 7;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, b.radius * 0.45, b.radius * 2.0, 0, 0, Math.PI * 2);
+          ctx.fillStyle = g;
+          ctx.fill();
+        }
+
+        ctx.restore();
+      }
+    }
+
     // ─── Power-up state ───────────────────────────────────────────────────────
     const powerups            = [];
     const POWERUP_SPAWN_INTERVAL = 20000; // ms
-    const POWERUP_RADIUS      = 14;
+    const POWERUP_RADIUS      = 22;
     const POWERUP_SPEED       = 1.5;
     const RAPID_FIRE_DURATION = 5000;     // ms
     let   lastPowerupSpawn    = 0;
@@ -150,28 +703,53 @@
       for (const p of powerups) {
         ctx.save();
         ctx.translate(p.x, p.y);
+        const pulse = 0.5 + 0.5 * Math.sin(now / 180);
+        const r = p.radius;
 
-        // Pulsing glow
-        const pulse = 0.5 + 0.5 * Math.sin(now / 200);
-        ctx.shadowColor = '#00ff88';
-        ctx.shadowBlur  = 10 + pulse * 10;
-
-        // Outer circle
+        // Outer energy ring
+        ctx.shadowColor = '#00ffaa';
+        ctx.shadowBlur  = 16 + pulse * 14;
         ctx.beginPath();
-        ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
-        ctx.fillStyle   = `rgba(0, ${Math.floor(180 + pulse * 75)}, 80, 0.9)`;
-        ctx.strokeStyle = '#aaffcc';
+        ctx.arc(0, 0, r + 3 + pulse * 3, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(0,255,160,${0.35 + pulse * 0.3})`;
         ctx.lineWidth   = 2;
+        ctx.stroke();
+
+        // Main gem body — hexagonal
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const a = (Math.PI / 3) * i - Math.PI / 6;
+          i === 0
+            ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r)
+            : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        }
+        ctx.closePath();
+        const gemG = ctx.createRadialGradient(-r * 0.3, -r * 0.3, 0, 0, 0, r);
+        gemG.addColorStop(0,   `rgba(150,255,200,${0.95})`);
+        gemG.addColorStop(0.4, `rgba(0,${Math.floor(180 + pulse * 70)},80,0.9)`);
+        gemG.addColorStop(1,   `rgba(0,60,30,0.85)`);
+        ctx.fillStyle   = gemG;
+        ctx.strokeStyle = '#aaffcc';
+        ctx.lineWidth   = 1.5;
         ctx.fill();
         ctx.stroke();
 
-        // Rotating lightning bolt symbol inside
+        // Inner facet lines
+        ctx.shadowBlur  = 0;
+        ctx.strokeStyle = `rgba(200,255,220,0.4)`;
+        ctx.lineWidth   = 0.8;
+        ctx.beginPath(); ctx.moveTo(0, -r * 0.8); ctx.lineTo(0, r * 0.8); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-r * 0.7, -r * 0.4); ctx.lineTo(r * 0.7, r * 0.4); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-r * 0.7,  r * 0.4); ctx.lineTo(r * 0.7, -r * 0.4); ctx.stroke();
+
+        // Rotating ⚡ icon
         ctx.rotate(p.angle);
-        ctx.fillStyle = '#ffffff';
-        ctx.font      = `bold ${p.radius}px Arial`;
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur  = 6;
+        ctx.fillStyle   = '#ffffff';
+        ctx.font        = `bold ${r * 0.95}px Arial`;
         ctx.textAlign    = 'center';
         ctx.textBaseline = 'middle';
-        ctx.shadowBlur = 0;
         ctx.fillText('⚡', 0, 1);
 
         ctx.restore();
@@ -258,7 +836,7 @@
 
     // ─── Enemies ──────────────────────────────────────────────────────────────
     const enemies             = [];
-    const ENEMY_SIZE          = 30;
+    const ENEMY_SIZE          = 52;
     const ENEMY_BASE_SPEED    = 1.8;
     const ENEMY_SPAWN_INTERVAL = 1000; // ms
     let   lastEnemySpawn      = 0;
@@ -275,14 +853,528 @@
         // Stagger X positions so enemies in the same wave don't all overlap
         const margin = ENEMY_SIZE * 2;
         enemies.push({
-          x:     margin + Math.random() * (canvas.width - margin * 2),
-          y:     -ENEMY_SIZE - w * (ENEMY_SIZE * 1.5), // slight vertical offset per enemy
-          size:  ENEMY_SIZE,
-          speed: (ENEMY_BASE_SPEED + Math.random() * 0.8) * speedMultiplier,
+          x:       margin + Math.random() * (canvas.width - margin * 2),
+          y:       -ENEMY_SIZE - w * (ENEMY_SIZE * 1.5),
+          size:    ENEMY_SIZE,
+          speed:   (ENEMY_BASE_SPEED + Math.random() * 0.8) * speedMultiplier,
           shape,
-          angle: 0,
-          spin:  (Math.random() - 0.5) * 0.04
+          angle:   0,
+          spin:    (Math.random() - 0.5) * 0.04,
+          imgType: Math.floor(Math.random() * 5)  // 0-4 → one of the 5 enemy ship designs
         });
+      }
+    }
+
+    // ─── Fast Meteors ─────────────────────────────────────────────────────────
+    const meteors              = [];
+    const lifeDrops            = []; // extra-life orbs that fall after a meteor is destroyed
+    const METEOR_SPAWN_MIN     = 4000;  // earliest a new fast meteor can appear (ms)
+    const METEOR_SPAWN_MAX     = 9000;  // latest
+    const METEOR_BASE_SPEED    = 5.0;   // much faster than normal enemies (1.8)
+    const METEOR_SIZE          = 46;
+    const LIFE_DROP_CHANCE     = 0.20;  // 20% chance a destroyed meteor drops +1 life
+    let   nextMeteorTime       = Date.now() + METEOR_SPAWN_MIN;
+
+    function spawnMeteor() {
+      const now = Date.now();
+      if (now < nextMeteorTime) return;
+      // Schedule the next one
+      nextMeteorTime = now + METEOR_SPAWN_MIN + Math.random() * (METEOR_SPAWN_MAX - METEOR_SPAWN_MIN);
+      meteors.push({
+        x:     METEOR_SIZE + Math.random() * (canvas.width - METEOR_SIZE * 2),
+        y:     -METEOR_SIZE,
+        size:  METEOR_SIZE + Math.random() * 10,   // slight size variance
+        speed: (METEOR_BASE_SPEED + Math.random() * 2) * speedMultiplier,
+        angle: 0,
+        spin:  (Math.random() - 0.5) * 0.08
+      });
+    }
+
+    function updateMeteors() {
+      for (let i = meteors.length - 1; i >= 0; i--) {
+        const m = meteors[i];
+        m.y     += m.speed;
+        m.angle += m.spin;
+        // hits the ship
+        if (ship.invincible === 0) {
+          const dx = m.x - ship.x, dy = m.y - ship.y;
+          if (Math.sqrt(dx*dx + dy*dy) < m.size / 2 + ship.width / 2) {
+            spawnParticles(m.x, m.y);
+            meteors.splice(i, 1);
+            loseLife();
+            continue;
+          }
+        }
+        // off screen — just remove, no life lost
+        if (m.y - m.size > canvas.height) meteors.splice(i, 1);
+      }
+      // update falling life drops
+      for (let i = lifeDrops.length - 1; i >= 0; i--) {
+        const d = lifeDrops[i];
+        d.y     += d.speed;
+        d.angle += 0.04;
+        // ship catches it
+        const dx = d.x - ship.x, dy = d.y - ship.y;
+        if (Math.sqrt(dx*dx + dy*dy) < d.radius + ship.width / 2) {
+          if (lives < 9) {
+            lives++;
+            scorePopups.push({ x: d.x, y: d.y - 10, points: '+1 ♥', life: 1.0 });
+            playPowerupSound();
+          }
+          lifeDrops.splice(i, 1);
+          continue;
+        }
+        if (d.y - d.radius > canvas.height) lifeDrops.splice(i, 1);
+      }
+    }
+
+    function drawMeteors() {
+      for (const m of meteors) {
+        ctx.save();
+        ctx.translate(m.x, m.y);
+        ctx.rotate(m.angle);
+        const r = m.size / 2;
+        // rocky irregular shape using a jagged polygon
+        ctx.beginPath();
+        const points = 9;
+        for (let i = 0; i < points; i++) {
+          const a   = (Math.PI * 2 / points) * i;
+          const jag = r * (0.75 + 0.25 * Math.sin(i * 7.3)); // pseudo-random bumps
+          i === 0
+            ? ctx.moveTo(Math.cos(a) * jag, Math.sin(a) * jag)
+            : ctx.lineTo(Math.cos(a) * jag, Math.sin(a) * jag);
+        }
+        ctx.closePath();
+        // dark grey-brown rock colour with orange glow (heated by atmosphere)
+        const mg = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+        mg.addColorStop(0,   '#cc7733');
+        mg.addColorStop(0.4, '#885522');
+        mg.addColorStop(1,   '#332211');
+        ctx.fillStyle   = mg;
+        ctx.shadowColor = '#ff6600';
+        ctx.shadowBlur  = 14;
+        ctx.fill();
+        ctx.strokeStyle = '#ffaa44';
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+        // speed streak behind it
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.moveTo(0, -r * 0.3);
+        ctx.lineTo(0, -r * 0.3 - m.speed * 4);
+        const streak = ctx.createLinearGradient(0, -r * 0.3, 0, -r * 0.3 - m.speed * 4);
+        streak.addColorStop(0, 'rgba(255,140,0,0.6)');
+        streak.addColorStop(1, 'rgba(255,80,0,0)');
+        ctx.strokeStyle = streak;
+        ctx.lineWidth   = r * 0.6;
+        ctx.stroke();
+        ctx.restore();
+      }
+      // life drop orbs — detailed heart crystal
+      for (const d of lifeDrops) {
+        ctx.save();
+        ctx.translate(d.x, d.y);
+        const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 280 + d.phase);
+        const r = d.radius;
+
+        // Outer pulsing ring
+        ctx.shadowColor = '#ff2266';
+        ctx.shadowBlur  = 14 + pulse * 12;
+        ctx.beginPath();
+        ctx.arc(0, 0, r + 2 + pulse * 3, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,80,140,${0.3 + pulse * 0.3})`;
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+
+        // Main orb body
+        const orbG = ctx.createRadialGradient(-r * 0.3, -r * 0.35, 0, 0, 0, r);
+        orbG.addColorStop(0,   `rgba(255,200,220,0.98)`);
+        orbG.addColorStop(0.35, `rgba(255,${Math.floor(60 + pulse * 60)},120,0.94)`);
+        orbG.addColorStop(0.8,  `rgba(180,0,60,0.88)`);
+        orbG.addColorStop(1,    `rgba(80,0,30,0.8)`);
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.fillStyle   = orbG;
+        ctx.strokeStyle = '#ffaacc';
+        ctx.lineWidth   = 1.5;
+        ctx.fill();
+        ctx.stroke();
+
+        // Specular highlight
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.ellipse(-r * 0.28, -r * 0.32, r * 0.22, r * 0.14, -0.5, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${0.5 + pulse * 0.25})`;
+        ctx.fill();
+
+        // Heart symbol
+        ctx.shadowColor = '#ff0044';
+        ctx.shadowBlur  = 5;
+        ctx.fillStyle   = '#ffffff';
+        ctx.font        = `bold ${r + 2}px Arial`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('♥', 0, 1);
+
+        ctx.restore();
+      }
+    }
+
+    // ─── Small Enemies ────────────────────────────────────────────────────────
+    // Faster than normal enemies, 3 HP, worth 30 pts
+    const smallEnemies           = [];
+    const SMALL_ENEMY_SIZE       = 38;           // smaller than normal (30)
+    const SMALL_ENEMY_BASE_SPEED = 3.2;          // faster than normal (1.8) and boss (1.0)
+    const SMALL_ENEMY_HP         = 3;
+    const SMALL_ENEMY_POINTS     = 30;
+    const SMALL_SPAWN_INTERVAL   = 5000;         // one every 5 s (independent timer)
+    let   lastSmallSpawn         = 0;
+
+    function spawnSmallEnemy() {
+      const now = Date.now();
+      if (now - lastSmallSpawn < SMALL_SPAWN_INTERVAL) return;
+      lastSmallSpawn = now;
+      // Spawn 1–2 per trigger for variety
+      const count = Math.random() < 0.35 ? 2 : 1;
+      for (let i = 0; i < count; i++) {
+        const margin = SMALL_ENEMY_SIZE * 2;
+        smallEnemies.push({
+          x:       margin + Math.random() * (canvas.width - margin * 2),
+          y:       -SMALL_ENEMY_SIZE - i * (SMALL_ENEMY_SIZE * 2),
+          size:    SMALL_ENEMY_SIZE,
+          speed:   (SMALL_ENEMY_BASE_SPEED + Math.random() * 1.0) * speedMultiplier,
+          hp:      SMALL_ENEMY_HP,
+          angle:   0,
+          spin:    (Math.random() - 0.5) * 0.09,
+          flash:   0,
+          imgType: Math.floor(Math.random() * 5)  // 0-4 → one of the 5 enemy ship designs
+        });
+      }
+    }
+
+    // ── 5 enemy ship draw functions (canvas art matching provided images) ──────
+
+    // Type 0: Red/green heavy fighter (image 1 — dark red with swept wings + gun towers)
+    function drawEnemyShip0(ctx, s, flash) {
+      const f = flash > 0;
+      // Left outer wing spike
+      ctx.beginPath();
+      ctx.moveTo(-s*0.55, -s*0.7); ctx.lineTo(-s*0.85, -s*0.95);
+      ctx.lineTo(-s*0.75, -s*0.45); ctx.lineTo(-s*0.5, -s*0.35);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#cc3300'; ctx.fill();
+      // Right outer wing spike
+      ctx.beginPath();
+      ctx.moveTo(s*0.55, -s*0.7); ctx.lineTo(s*0.85, -s*0.95);
+      ctx.lineTo(s*0.75, -s*0.45); ctx.lineTo(s*0.5, -s*0.35);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#cc3300'; ctx.fill();
+      // Left mid wing
+      ctx.beginPath();
+      ctx.moveTo(-s*0.15, -s*0.3); ctx.lineTo(-s*0.7, -s*0.05);
+      ctx.lineTo(-s*0.65, s*0.45); ctx.lineTo(-s*0.15, s*0.35);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#445533'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#cc4400'; ctx.lineWidth = 1; ctx.stroke();
+      // Right mid wing
+      ctx.beginPath();
+      ctx.moveTo(s*0.15, -s*0.3); ctx.lineTo(s*0.7, -s*0.05);
+      ctx.lineTo(s*0.65, s*0.45); ctx.lineTo(s*0.15, s*0.35);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#445533'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#cc4400'; ctx.lineWidth = 1; ctx.stroke();
+      // Central hull
+      ctx.beginPath();
+      ctx.moveTo(0, -s*0.9); ctx.lineTo(-s*0.18, -s*0.5);
+      ctx.lineTo(-s*0.22, s*0.6); ctx.lineTo(s*0.22, s*0.6);
+      ctx.lineTo(s*0.18, -s*0.5); ctx.closePath();
+      const hg = ctx.createLinearGradient(0, -s*0.9, 0, s*0.6);
+      hg.addColorStop(0, f ? '#fff' : '#bb4422');
+      hg.addColorStop(0.5, f ? '#eee' : '#334422');
+      hg.addColorStop(1, f ? '#ddd' : '#221100');
+      ctx.fillStyle = hg; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#ff6633'; ctx.lineWidth = 1.2; ctx.stroke();
+      // Left gun tower
+      ctx.fillStyle = f ? '#fff' : '#cc3300';
+      ctx.fillRect(-s*0.14, -s*0.75, s*0.1, s*0.3);
+      ctx.fillRect(-s*0.18, -s*0.82, s*0.08, s*0.12);
+      // Right gun tower
+      ctx.fillRect(s*0.04, -s*0.75, s*0.1, s*0.3);
+      ctx.fillRect(s*0.1, -s*0.82, s*0.08, s*0.12);
+      // Centre cockpit
+      ctx.beginPath();
+      ctx.ellipse(0, -s*0.2, s*0.1, s*0.18, 0, 0, Math.PI*2);
+      ctx.fillStyle = f ? '#fff' : '#bb3311'; ctx.fill();
+      // Engine nozzles
+      ctx.fillStyle = f ? '#aaa' : '#556644';
+      ctx.fillRect(-s*0.08, s*0.55, s*0.07, s*0.2);
+      ctx.fillRect(s*0.01, s*0.55, s*0.07, s*0.2);
+    }
+
+    // Type 1: Teal wide-body bomber (image 2 — cyan/dark wide wings, multiple pods)
+    function drawEnemyShip1(ctx, s, flash) {
+      const f = flash > 0;
+      // Far left wing tip
+      ctx.beginPath();
+      ctx.moveTo(-s*0.9, s*0.05); ctx.lineTo(-s*1.0, s*0.25);
+      ctx.lineTo(-s*0.75, s*0.35); ctx.lineTo(-s*0.7, s*0.1);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#005566'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#00ccdd'; ctx.lineWidth = 1; ctx.stroke();
+      // Far right wing tip
+      ctx.beginPath();
+      ctx.moveTo(s*0.9, s*0.05); ctx.lineTo(s*1.0, s*0.25);
+      ctx.lineTo(s*0.75, s*0.35); ctx.lineTo(s*0.7, s*0.1);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#005566'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#00ccdd'; ctx.lineWidth = 1; ctx.stroke();
+      // Left main wing
+      ctx.beginPath();
+      ctx.moveTo(-s*0.15, -s*0.1); ctx.lineTo(-s*0.75, s*0.05);
+      ctx.lineTo(-s*0.7, s*0.45); ctx.lineTo(-s*0.1, s*0.4);
+      ctx.closePath();
+      const lwg = ctx.createLinearGradient(-s*0.75, 0, -s*0.1, 0);
+      lwg.addColorStop(0, f ? '#fff' : '#003344');
+      lwg.addColorStop(1, f ? '#eee' : '#006688');
+      ctx.fillStyle = lwg; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#00aacc'; ctx.lineWidth = 1; ctx.stroke();
+      // Right main wing
+      ctx.beginPath();
+      ctx.moveTo(s*0.15, -s*0.1); ctx.lineTo(s*0.75, s*0.05);
+      ctx.lineTo(s*0.7, s*0.45); ctx.lineTo(s*0.1, s*0.4);
+      ctx.closePath();
+      ctx.fillStyle = lwg; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#00aacc'; ctx.lineWidth = 1; ctx.stroke();
+      // Central body — tall nose tower
+      ctx.beginPath();
+      ctx.moveTo(0, -s*0.95); ctx.lineTo(-s*0.1, -s*0.5);
+      ctx.lineTo(-s*0.2, s*0.55); ctx.lineTo(s*0.2, s*0.55);
+      ctx.lineTo(s*0.1, -s*0.5); ctx.closePath();
+      const bg = ctx.createLinearGradient(0, -s*0.95, 0, s*0.55);
+      bg.addColorStop(0, f ? '#fff' : '#00aacc');
+      bg.addColorStop(0.3, f ? '#eee' : '#002233');
+      bg.addColorStop(1, f ? '#ddd' : '#001122');
+      ctx.fillStyle = bg; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#33ccee'; ctx.lineWidth = 1.2; ctx.stroke();
+      // Cockpit panel
+      ctx.beginPath();
+      ctx.roundRect(-s*0.08, -s*0.85, s*0.16, s*0.3, s*0.04);
+      ctx.fillStyle = f ? '#fff' : '#004455'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#00ddff'; ctx.lineWidth = 1; ctx.stroke();
+      // Wing engine pods (left + right)
+      ctx.fillStyle = f ? '#ccc' : '#002233';
+      ctx.beginPath(); ctx.roundRect(-s*0.42, s*0.05, s*0.14, s*0.28, s*0.03); ctx.fill();
+      ctx.beginPath(); ctx.roundRect( s*0.28, s*0.05, s*0.14, s*0.28, s*0.03); ctx.fill();
+      // Outer tip guns
+      ctx.fillStyle = f ? '#ccc' : '#005577';
+      ctx.fillRect(-s*0.97, s*0.0, s*0.06, s*0.1);
+      ctx.fillRect( s*0.91, s*0.0, s*0.06, s*0.1);
+      // Engine exhaust
+      ctx.fillStyle = f ? '#88eeff' : '#00ccff';
+      ctx.beginPath(); ctx.arc(-s*0.05, s*0.58, s*0.04, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc( s*0.05, s*0.58, s*0.04, 0, Math.PI*2); ctx.fill();
+    }
+
+    // Type 2: Grey/blue pixel rocket (image 3 — slim body, V-wings, side missiles)
+    function drawEnemyShip2(ctx, s, flash) {
+      const f = flash > 0;
+      // Left V-wing
+      ctx.beginPath();
+      ctx.moveTo(-s*0.05, s*0.05); ctx.lineTo(-s*0.55, s*0.55);
+      ctx.lineTo(-s*0.5, s*0.7); ctx.lineTo(-s*0.02, s*0.25);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#aabbcc'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#3399ff'; ctx.lineWidth = 1.5; ctx.stroke();
+      // Right V-wing
+      ctx.beginPath();
+      ctx.moveTo(s*0.05, s*0.05); ctx.lineTo(s*0.55, s*0.55);
+      ctx.lineTo(s*0.5, s*0.7); ctx.lineTo(s*0.02, s*0.25);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#aabbcc'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#3399ff'; ctx.lineWidth = 1.5; ctx.stroke();
+      // Left missile
+      ctx.beginPath();
+      ctx.moveTo(-s*0.3, -s*0.55); ctx.lineTo(-s*0.38, -s*0.3);
+      ctx.lineTo(-s*0.3, s*0.1); ctx.lineTo(-s*0.22, s*0.1);
+      ctx.lineTo(-s*0.18, -s*0.3); ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#778899'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#aaccff'; ctx.lineWidth = 0.8; ctx.stroke();
+      // Right missile
+      ctx.beginPath();
+      ctx.moveTo(s*0.3, -s*0.55); ctx.lineTo(s*0.38, -s*0.3);
+      ctx.lineTo(s*0.3, s*0.1); ctx.lineTo(s*0.22, s*0.1);
+      ctx.lineTo(s*0.18, -s*0.3); ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#778899'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#aaccff'; ctx.lineWidth = 0.8; ctx.stroke();
+      // Main body
+      ctx.beginPath();
+      ctx.moveTo(0, -s*0.9); ctx.lineTo(-s*0.12, -s*0.5);
+      ctx.lineTo(-s*0.14, s*0.45); ctx.lineTo(s*0.14, s*0.45);
+      ctx.lineTo(s*0.12, -s*0.5); ctx.closePath();
+      const mbg = ctx.createLinearGradient(0, -s*0.9, 0, s*0.45);
+      mbg.addColorStop(0, f ? '#fff' : '#aabbcc');
+      mbg.addColorStop(0.4, f ? '#eee' : '#667788');
+      mbg.addColorStop(1, f ? '#ddd' : '#334455');
+      ctx.fillStyle = mbg; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#3399ff'; ctx.lineWidth = 1.2; ctx.stroke();
+      // Cockpit oval
+      ctx.beginPath();
+      ctx.ellipse(0, -s*0.35, s*0.08, s*0.16, 0, 0, Math.PI*2);
+      ctx.fillStyle = f ? '#fff' : '#55aaff'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#99ddff'; ctx.lineWidth = 1; ctx.stroke();
+      // Blue glow core in cockpit
+      ctx.beginPath();
+      ctx.arc(0, -s*0.38, s*0.05, 0, Math.PI*2);
+      ctx.fillStyle = f ? '#fff' : '#0055ff'; ctx.fill();
+      // Engine
+      ctx.fillStyle = f ? '#88ddff' : '#3399ff';
+      ctx.beginPath(); ctx.arc(0, s*0.48, s*0.05, 0, Math.PI*2); ctx.fill();
+    }
+
+    // Type 3: Blue pixel fighter with fire trail (image 4 — X-fighter, blue gems, engine fire)
+    function drawEnemyShip3(ctx, s, flash) {
+      const f = flash > 0;
+      // Left gun boom
+      ctx.fillStyle = f ? '#fff' : '#556677';
+      ctx.fillRect(-s*0.42, -s*0.35, s*0.1, s*0.55);
+      ctx.fillRect(-s*0.5, -s*0.38, s*0.08, s*0.12);
+      // Right gun boom
+      ctx.fillRect( s*0.32, -s*0.35, s*0.1, s*0.55);
+      ctx.fillRect( s*0.42, -s*0.38, s*0.08, s*0.12);
+      // Left body panel
+      ctx.beginPath();
+      ctx.moveTo(-s*0.08, -s*0.2); ctx.lineTo(-s*0.38, s*0.15);
+      ctx.lineTo(-s*0.28, s*0.5); ctx.lineTo(-s*0.05, s*0.3);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#667788'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#3366bb'; ctx.lineWidth = 1; ctx.stroke();
+      // Right body panel
+      ctx.beginPath();
+      ctx.moveTo(s*0.08, -s*0.2); ctx.lineTo(s*0.38, s*0.15);
+      ctx.lineTo(s*0.28, s*0.5); ctx.lineTo(s*0.05, s*0.3);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#667788'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#3366bb'; ctx.lineWidth = 1; ctx.stroke();
+      // Central hull
+      ctx.beginPath();
+      ctx.moveTo(0, -s*0.85); ctx.lineTo(-s*0.12, -s*0.3);
+      ctx.lineTo(-s*0.1, s*0.5); ctx.lineTo(s*0.1, s*0.5);
+      ctx.lineTo(s*0.12, -s*0.3); ctx.closePath();
+      const cbg = ctx.createLinearGradient(0, -s*0.85, 0, s*0.5);
+      cbg.addColorStop(0, f ? '#fff' : '#8899aa');
+      cbg.addColorStop(0.3, f ? '#eee' : '#334466');
+      cbg.addColorStop(1, f ? '#ddd' : '#112244');
+      ctx.fillStyle = cbg; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#5588cc'; ctx.lineWidth = 1.2; ctx.stroke();
+      // Blue gem nodes
+      const gems = [[-s*0.18, -s*0.1],[0, -s*0.4],[s*0.18, -s*0.1],[0, s*0.15]];
+      for (const [gx, gy] of gems) {
+        ctx.beginPath();
+        ctx.arc(gx, gy, s*0.06, 0, Math.PI*2);
+        ctx.fillStyle = f ? '#fff' : '#22aaff'; ctx.fill();
+        ctx.strokeStyle = f ? '#fff' : '#88ddff'; ctx.lineWidth = 0.8; ctx.stroke();
+      }
+      // Engine fire glow (bottom)
+      if (!f) {
+        const fg = ctx.createRadialGradient(0, s*0.6, 0, 0, s*0.6, s*0.22);
+        fg.addColorStop(0, 'rgba(255,220,50,0.95)');
+        fg.addColorStop(0.4, 'rgba(255,80,0,0.7)');
+        fg.addColorStop(1, 'rgba(255,0,0,0)');
+        ctx.beginPath(); ctx.arc(0, s*0.6, s*0.22, 0, Math.PI*2);
+        ctx.fillStyle = fg; ctx.fill();
+      }
+    }
+
+    // Type 4: Dark pixel drone (image 5 — grey/black squat body, red engine pods)
+    function drawEnemyShip4(ctx, s, flash) {
+      const f = flash > 0;
+      // Left engine pod
+      ctx.beginPath();
+      ctx.moveTo(-s*0.22, -s*0.1); ctx.lineTo(-s*0.45, s*0.05);
+      ctx.lineTo(-s*0.42, s*0.38); ctx.lineTo(-s*0.18, s*0.3);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#333333'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#555555'; ctx.lineWidth = 1; ctx.stroke();
+      // Right engine pod
+      ctx.beginPath();
+      ctx.moveTo(s*0.22, -s*0.1); ctx.lineTo(s*0.45, s*0.05);
+      ctx.lineTo(s*0.42, s*0.38); ctx.lineTo(s*0.18, s*0.3);
+      ctx.closePath();
+      ctx.fillStyle = f ? '#fff' : '#333333'; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#555555'; ctx.lineWidth = 1; ctx.stroke();
+      // Left red thruster flame
+      if (!f) {
+        ctx.beginPath(); ctx.arc(-s*0.3, s*0.22, s*0.08, 0, Math.PI*2);
+        ctx.fillStyle = '#ff4400'; ctx.fill();
+        ctx.beginPath(); ctx.arc(-s*0.3, s*0.22, s*0.04, 0, Math.PI*2);
+        ctx.fillStyle = '#ffcc00'; ctx.fill();
+      }
+      // Right red thruster flame
+      if (!f) {
+        ctx.beginPath(); ctx.arc(s*0.3, s*0.22, s*0.08, 0, Math.PI*2);
+        ctx.fillStyle = '#ff4400'; ctx.fill();
+        ctx.beginPath(); ctx.arc(s*0.3, s*0.22, s*0.04, 0, Math.PI*2);
+        ctx.fillStyle = '#ffcc00'; ctx.fill();
+      }
+      // Main body (elongated oval)
+      ctx.beginPath();
+      ctx.ellipse(0, -s*0.1, s*0.18, s*0.55, 0, 0, Math.PI*2);
+      const dbg = ctx.createRadialGradient(-s*0.05, -s*0.2, 0, 0, -s*0.1, s*0.55);
+      dbg.addColorStop(0, f ? '#fff' : '#555555');
+      dbg.addColorStop(0.5, f ? '#eee' : '#2a2a2a');
+      dbg.addColorStop(1, f ? '#ddd' : '#111111');
+      ctx.fillStyle = dbg; ctx.fill();
+      ctx.strokeStyle = f ? '#fff' : '#444444'; ctx.lineWidth = 1.2; ctx.stroke();
+      // Cockpit window (dark oval)
+      ctx.beginPath();
+      ctx.ellipse(0, -s*0.3, s*0.07, s*0.12, 0, 0, Math.PI*2);
+      ctx.fillStyle = f ? '#fff' : '#111111'; ctx.fill();
+      // Blue bottom thruster
+      ctx.beginPath(); ctx.arc(0, s*0.42, s*0.05, 0, Math.PI*2);
+      ctx.fillStyle = f ? '#88eeff' : '#00ccff'; ctx.fill();
+    }
+
+    // ── Shared enemy ship renderer — picks design by imgType ─────────────────
+    function drawEnemyShipByType(e, flash) {
+      const s = e.size * 0.5;
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.rotate(e.angle);
+      // Red glow on hit
+      if (flash > 0) {
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur  = 18;
+      } else {
+        ctx.shadowColor = '#ff3300';
+        ctx.shadowBlur  = 6;
+      }
+      switch (e.imgType) {
+        case 0: drawEnemyShip0(ctx, s, flash); break;
+        case 1: drawEnemyShip1(ctx, s, flash); break;
+        case 2: drawEnemyShip2(ctx, s, flash); break;
+        case 3: drawEnemyShip3(ctx, s, flash); break;
+        case 4: drawEnemyShip4(ctx, s, flash); break;
+        default: drawEnemyShip0(ctx, s, flash);
+      }
+      ctx.restore();
+    }
+
+    function drawSmallEnemies() {
+      for (const e of smallEnemies) {
+        drawEnemyShipByType(e, e.flash);
+
+        // HP pips — drawn in screen space below the enemy
+        ctx.save();
+        const r    = e.size / 2;
+        const pipW = 6, pipH = 3, pipGap = 2;
+        const totalW = e.hp * (pipW + pipGap) - pipGap;
+        const startX = e.x - totalW / 2;
+        ctx.shadowBlur = 0;
+        for (let p = 0; p < e.hp; p++) {
+          ctx.fillStyle = '#ffcc00';
+          ctx.fillRect(startX + p * (pipW + pipGap), e.y + r + 4, pipW, pipH);
+        }
+        ctx.restore();
       }
     }
 
@@ -427,8 +1519,6 @@
         ctx.restore();
       }
     }
-    let audioCtx  = null;
-    let bgmPlaying = false;
 
     function ensureAudio() {
       if (!audioCtx) {
@@ -530,7 +1620,7 @@
 
     // Schedule ~0.25s ahead; called every animation frame
     function scheduleBGM() {
-      if (!bgmPlaying || !bgmMaster) return;
+      if (!bgmPlaying || !bgmMaster || paused) return;
       const LOOK_AHEAD = 0.25;
       while (bgmNextTime < audioCtx.currentTime + LOOK_AHEAD) {
         const step = bgmStep % 16;
@@ -757,6 +1847,9 @@
     const MAX_LIVES = 3;
     let lives    = MAX_LIVES;
     let gameOver = false;
+    let paused   = false;
+    let highScore  = 0;
+    let lastScore  = 0;
 
     function resetGame() {
       score         = 0;
@@ -783,13 +1876,30 @@
       powerups.length     = 0;
       lastPowerupSpawn    = 0;
       rapidFireUntil      = 0;
+      meteors.length      = 0;
+      lifeDrops.length    = 0;
+      nextMeteorTime      = Date.now() + METEOR_SPAWN_MIN;
+      smallEnemies.length = 0;
+      lastSmallSpawn      = 0;
       energyWaves.length  = 0;
+      enemyBullets.length = 0;
+      bossNextShot        = 0;
     }
 
-    // Listen for R key to restart
+    // Listen for R to restart, P / Space to pause
     document.addEventListener('keydown', (e) => {
       if (e.key === 'r' || e.key === 'R') {
         if (gameOver) { resetGame(); startBGM(); }
+      }
+      if (e.key === 'p' || e.key === 'P' || e.key === ' ') {
+        // Space during gameplay = shoot (handled in keys{}), so only pause with P.
+        // But if the user presses Space while game is already paused (not shooting), toggle.
+        if (!gameOver) {
+          if (e.key === 'p' || e.key === 'P') {
+            paused = !paused;
+            if (paused) stopBGM(); else startBGM();
+          }
+        }
       }
     });
 
@@ -797,27 +1907,38 @@
       lives--;
       ship.invincible = 120;
       if (lives <= 0) {
-        lives    = 0;
-        gameOver = true;
+        lives     = 0;
+        gameOver  = true;
+        paused    = false;
+        lastScore = score;
+        if (score > highScore) highScore = score;
         stopBGM();
       }
     }
     // ─── Update ───────────────────────────────────────────────────────────────
     function update() {
-      if (gameOver) return;
+      if (gameOver || paused) return;
 
       updateDifficulty();
       if (ship.invincible > 0) ship.invincible--;
 
-      // Ship movement
+      // Apply touch joystick + fire button (no-op on desktop)
+      applyTouchMovement();
+
+      // Ship movement — all 4 directions
       if (keys['ArrowLeft'])  ship.x -= ship.speed;
       if (keys['ArrowRight']) ship.x += ship.speed;
+      if (keys['ArrowUp'])    ship.y -= ship.speed;
+      if (keys['ArrowDown'])  ship.y += ship.speed;
       if (keys[' '])          shoot();
 
-      // Clamp ship to canvas
-      const hw = ship.width / 2;
-      if (ship.x - hw < 0)            ship.x = hw;
-      if (ship.x + hw > canvas.width) ship.x = canvas.width - hw;
+      // Clamp ship within screen boundaries
+      const hw = ship.width  / 2;
+      const hh = ship.height / 2;
+      if (ship.x - hw < 0)             ship.x = hw;
+      if (ship.x + hw > canvas.width)  ship.x = canvas.width  - hw;
+      if (ship.y - hh < 0)             ship.y = hh;
+      if (ship.y + hh > canvas.height) ship.y = canvas.height - hh;
 
       // Bullets
       for (let i = bullets.length - 1; i >= 0; i--) {
@@ -828,6 +1949,8 @@
       // Normal enemies
       spawnEnemy();
       spawnPowerup();
+      spawnMeteor();
+      spawnSmallEnemy();
       for (let i = enemies.length - 1; i >= 0; i--) {
         enemies[i].y     += enemies[i].speed;
         enemies[i].angle += enemies[i].spin;
@@ -898,6 +2021,51 @@
         }
         if (hit) { bullets.splice(bi, 1); continue; }
 
+        // Bullet ↔ meteor collision
+        for (let mi = meteors.length - 1; mi >= 0; mi--) {
+          const m = meteors[mi];
+          const mr = m.size / 2;
+          if (b.x > m.x - mr && b.x < m.x + mr &&
+              b.y < m.y + mr && b.y + b.height > m.y - mr) {
+            spawnParticles(m.x, m.y);
+            addScore(15, m.x, m.y - mr);  // meteors worth 15 pts (slightly more)
+            playHitSound();
+            // chance to drop an extra life
+            if (Math.random() < LIFE_DROP_CHANCE) {
+              lifeDrops.push({
+                x: m.x, y: m.y, radius: 20,
+                speed: 1.8, angle: 0,
+                phase: Math.random() * Math.PI * 2
+              });
+            }
+            meteors.splice(mi, 1);
+            hit = true;
+            break;
+          }
+        }
+        if (hit) { bullets.splice(bi, 1); continue; }
+
+        // Bullet ↔ small enemy collision (3 HP — takes 3 hits)
+        for (let si = smallEnemies.length - 1; si >= 0; si--) {
+          const se = smallEnemies[si];
+          const sr = se.size / 2;
+          if (b.x > se.x - sr && b.x < se.x + sr &&
+              b.y < se.y + sr && b.y + b.height > se.y - sr) {
+            se.hp--;
+            se.flash = 6;
+            spawnParticles(b.x, b.y);
+            playHitSound();
+            if (se.hp <= 0) {
+              spawnParticles(se.x, se.y);
+              addScore(SMALL_ENEMY_POINTS, se.x, se.y - sr);
+              smallEnemies.splice(si, 1);
+            }
+            hit = true;
+            break;
+          }
+        }
+        if (hit) { bullets.splice(bi, 1); continue; }
+
         // Bullet ↔ boss collision
         if (boss) {
           const br = boss.size / 2;
@@ -926,7 +2094,29 @@
       updateParticles();
       updateScorePopups();
       updatePowerups();
+      updateMeteors();
+
+      // Small enemy movement + ship collision
+      for (let i = smallEnemies.length - 1; i >= 0; i--) {
+        const e = smallEnemies[i];
+        e.y     += e.speed;
+        e.angle += e.spin;
+        if (e.flash > 0) e.flash--;
+        // hits the ship
+        if (ship.invincible === 0) {
+          const dx = e.x - ship.x, dy = e.y - ship.y;
+          if (Math.sqrt(dx*dx + dy*dy) < e.size / 2 + ship.width / 2) {
+            spawnParticles(e.x, e.y);
+            smallEnemies.splice(i, 1);
+            loseLife();
+            continue;
+          }
+        }
+        // off screen — remove silently
+        if (e.y - e.size > canvas.height) smallEnemies.splice(i, 1);
+      }
       updateEnergyWaves();
+      updateEnemyBullets();
       updateStars();
     }
 
@@ -946,104 +2136,350 @@
 
     function drawGameOver() {
       ctx.save();
-      // Semi-transparent dark overlay
       ctx.fillStyle = 'rgba(0,0,0,0.65)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       const cx = canvas.width  / 2;
       const cy = canvas.height / 2;
 
-      // "GAME OVER" — shadow then fill
+      // "GAME OVER"
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'middle';
       ctx.font         = 'bold 72px Arial';
       ctx.fillStyle    = 'rgba(0,0,0,0.8)';
-      ctx.fillText('GAME OVER', cx + 3, cy - 50 + 3);
+      ctx.fillText('GAME OVER', cx + 3, cy - 70 + 3);
       ctx.fillStyle = '#ff2222';
-      ctx.fillText('GAME OVER', cx, cy - 50);
+      ctx.fillText('GAME OVER', cx, cy - 70);
 
-      // Final score
-      ctx.font      = 'bold 28px Arial';
+      // Last score
+      ctx.font      = 'bold 26px Arial';
       ctx.fillStyle = 'rgba(0,0,0,0.8)';
-      ctx.fillText(`FINAL SCORE: ${score}`, cx + 2, cy + 20 + 2);
+      ctx.fillText(`SCORE: ${lastScore}`, cx + 2, cy - 10 + 2);
       ctx.fillStyle = '#f0f040';
-      ctx.fillText(`FINAL SCORE: ${score}`, cx, cy + 20);
+      ctx.fillText(`SCORE: ${lastScore}`, cx, cy - 10);
 
-      // Restart prompt — pulsing alpha
+      // High score
+      ctx.font      = 'bold 20px Arial';
+      ctx.fillStyle = 'rgba(0,0,0,0.8)';
+      ctx.fillText(`BEST: ${highScore}`, cx + 2, cy + 26 + 2);
+      ctx.fillStyle = highScore === lastScore ? '#ff88ff' : '#aaffaa';
+      ctx.fillText(
+        highScore === lastScore && lastScore > 0
+          ? `🏆 BEST: ${highScore}  NEW HIGH SCORE!`
+          : `BEST: ${highScore}`,
+        cx, cy + 26
+      );
+
+      // Restart prompt — pulsing alpha, adapts to device
       const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 400);
-      ctx.font         = 'bold 22px Arial';
-      ctx.globalAlpha  = pulse;
-      ctx.fillStyle    = '#ffffff';
-      ctx.fillText('Press  R  to Restart', cx, cy + 75);
+      ctx.font        = 'bold 22px Arial';
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle   = '#ffffff';
+      const restartHint = isMobile() ? 'Tap anywhere to Restart' : 'Press  R  to Restart';
+      ctx.fillText(restartHint, cx, cy + 75);
+      ctx.restore();
+    }
+
+    function drawPauseOverlay() {
+      if (!paused) return;
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const cx = canvas.width / 2, cy = canvas.height / 2;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font         = 'bold 64px Arial';
+      ctx.fillStyle    = 'rgba(0,0,0,0.7)';
+      ctx.fillText('PAUSED', cx + 3, cy - 20 + 3);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('PAUSED', cx, cy - 20);
+      const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 400);
+      ctx.font        = 'bold 20px Arial';
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle   = '#aaaaaa';
+      const resumeHint = isMobile() ? 'Tap ⏸ to Resume' : 'Press  P  to Resume';
+      ctx.fillText(resumeHint, cx, cy + 30);
       ctx.restore();
     }
     function drawBoss() {
       if (!boss) return;
+      const f = bossHitFlash > 0;
+      const s = boss.size * 0.5;   // half-size as drawing unit
+      const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 180);
+
       ctx.save();
       ctx.translate(boss.x, boss.y);
       ctx.rotate(boss.angle);
-      const r = boss.size / 2;
 
-      // Flash white on hit, otherwise purple glow
-      if (bossHitFlash > 0) {
-        ctx.shadowColor = '#ffffff';
-        ctx.shadowBlur  = 30;
-        ctx.fillStyle   = '#ffffff';
-        ctx.strokeStyle = '#cc88ff';
-      } else {
-        ctx.shadowColor = '#cc00ff';
-        ctx.shadowBlur  = 20;
-        ctx.fillStyle   = '#8800cc';
-        ctx.strokeStyle = '#dd88ff';
+      // ── Outer glow aura ────────────────────────────────────────────────────
+      if (!f) {
+        const aura = ctx.createRadialGradient(0, 0, s * 0.5, 0, 0, s * 2.2);
+        aura.addColorStop(0,   `rgba(180,0,255,${0.18 * pulse})`);
+        aura.addColorStop(0.5, `rgba(100,0,180,${0.10 * pulse})`);
+        aura.addColorStop(1,   'rgba(0,0,0,0)');
+        ctx.beginPath();
+        ctx.arc(0, 0, s * 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = aura;
+        ctx.fill();
       }
-      ctx.lineWidth = 2.5;
 
-      // Eight-pointed star shape for the boss
+      // ── Far outer sweep wings ──────────────────────────────────────────────
+      // Left
       ctx.beginPath();
-      const spikes = 8;
-      const outerR = r;
-      const innerR = r * 0.5;
-      for (let i = 0; i < spikes * 2; i++) {
-        const a    = (Math.PI / spikes) * i - Math.PI / 2;
-        const rad  = i % 2 === 0 ? outerR : innerR;
-        i === 0
-          ? ctx.moveTo(Math.cos(a) * rad, Math.sin(a) * rad)
-          : ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
-      }
+      ctx.moveTo(-s * 0.3,  -s * 0.6);
+      ctx.lineTo(-s * 1.7,  -s * 1.1);
+      ctx.lineTo(-s * 2.0,   s * 0.1);
+      ctx.lineTo(-s * 1.6,   s * 0.8);
+      ctx.lineTo(-s * 0.5,   s * 0.5);
       ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
+      const lwOuter = ctx.createLinearGradient(-s * 2.0, -s * 1.1, -s * 0.3, s * 0.5);
+      lwOuter.addColorStop(0, f ? '#fff' : '#550088');
+      lwOuter.addColorStop(0.5, f ? '#eee' : '#330055');
+      lwOuter.addColorStop(1, f ? '#ddd' : '#1a0033');
+      ctx.fillStyle   = lwOuter;
+      ctx.strokeStyle = f ? '#fff' : '#bb44ff';
+      ctx.lineWidth   = 1.5;
+      ctx.fill(); ctx.stroke();
 
-      // Inner circle core
+      // Right
       ctx.beginPath();
-      ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
-      ctx.fillStyle = bossHitFlash > 0 ? '#ffccff' : '#ee44ff';
-      ctx.shadowBlur = 10;
+      ctx.moveTo( s * 0.3,  -s * 0.6);
+      ctx.lineTo( s * 1.7,  -s * 1.1);
+      ctx.lineTo( s * 2.0,   s * 0.1);
+      ctx.lineTo( s * 1.6,   s * 0.8);
+      ctx.lineTo( s * 0.5,   s * 0.5);
+      ctx.closePath();
+      ctx.fillStyle   = lwOuter;
+      ctx.strokeStyle = f ? '#fff' : '#bb44ff';
+      ctx.lineWidth   = 1.5;
+      ctx.fill(); ctx.stroke();
+
+      // Wing edge highlight streaks
+      ctx.shadowColor = f ? '#fff' : '#dd00ff';
+      ctx.shadowBlur  = f ? 20 : 10;
+      ctx.beginPath();
+      ctx.moveTo(-s * 1.7, -s * 1.1); ctx.lineTo(-s * 2.0, s * 0.1);
+      ctx.strokeStyle = f ? '#fff' : `rgba(220,100,255,${pulse})`;
+      ctx.lineWidth   = 2.5; ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo( s * 1.7, -s * 1.1); ctx.lineTo( s * 2.0, s * 0.1);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // ── Mid shoulder armour plates ─────────────────────────────────────────
+      // Left shoulder
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.22, -s * 0.9);
+      ctx.lineTo(-s * 0.8,  -s * 0.7);
+      ctx.lineTo(-s * 1.0,   s * 0.1);
+      ctx.lineTo(-s * 0.7,   s * 0.6);
+      ctx.lineTo(-s * 0.22,  s * 0.4);
+      ctx.closePath();
+      const lsh = ctx.createLinearGradient(-s, -s * 0.9, -s * 0.2, s * 0.6);
+      lsh.addColorStop(0, f ? '#fff' : '#6600aa');
+      lsh.addColorStop(1, f ? '#ccc' : '#220044');
+      ctx.fillStyle   = lsh;
+      ctx.strokeStyle = f ? '#fff' : '#cc55ff';
+      ctx.lineWidth   = 1.2;
+      ctx.fill(); ctx.stroke();
+
+      // Right shoulder
+      ctx.beginPath();
+      ctx.moveTo( s * 0.22, -s * 0.9);
+      ctx.lineTo( s * 0.8,  -s * 0.7);
+      ctx.lineTo( s * 1.0,   s * 0.1);
+      ctx.lineTo( s * 0.7,   s * 0.6);
+      ctx.lineTo( s * 0.22,  s * 0.4);
+      ctx.closePath();
+      ctx.fillStyle   = lsh;
+      ctx.strokeStyle = f ? '#fff' : '#cc55ff';
+      ctx.lineWidth   = 1.2;
+      ctx.fill(); ctx.stroke();
+
+      // ── Wing cannon pods (outer) ───────────────────────────────────────────
+      // Left
+      ctx.beginPath();
+      ctx.roundRect(-s * 1.55, -s * 0.2, s * 0.32, s * 0.55, s * 0.06);
+      ctx.fillStyle   = f ? '#fff' : '#1a0033';
+      ctx.strokeStyle = f ? '#fff' : '#9933cc';
+      ctx.lineWidth   = 1; ctx.fill(); ctx.stroke();
+      // barrel
+      ctx.fillStyle = f ? '#fff' : '#7700aa';
+      ctx.fillRect(-s * 1.46, -s * 0.38, s * 0.14, s * 0.18);
+      // Right
+      ctx.beginPath();
+      ctx.roundRect( s * 1.23, -s * 0.2, s * 0.32, s * 0.55, s * 0.06);
+      ctx.fillStyle   = f ? '#fff' : '#1a0033';
+      ctx.strokeStyle = f ? '#fff' : '#9933cc';
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = f ? '#fff' : '#7700aa';
+      ctx.fillRect( s * 1.32, -s * 0.38, s * 0.14, s * 0.18);
+
+      // ── Central fortress hull ──────────────────────────────────────────────
+      ctx.beginPath();
+      ctx.moveTo( 0,       -s * 1.5);   // nose spike tip
+      ctx.lineTo(-s * 0.12, -s * 1.0);
+      ctx.lineTo(-s * 0.28, -s * 0.6);
+      ctx.lineTo(-s * 0.32,  s * 0.7);
+      ctx.lineTo( s * 0.32,  s * 0.7);
+      ctx.lineTo( s * 0.28, -s * 0.6);
+      ctx.lineTo( s * 0.12, -s * 1.0);
+      ctx.closePath();
+      const hullG = ctx.createLinearGradient(0, -s * 1.5, 0, s * 0.7);
+      hullG.addColorStop(0,   f ? '#fff' : '#cc66ff');
+      hullG.addColorStop(0.2, f ? '#eee' : '#550099');
+      hullG.addColorStop(0.6, f ? '#ddd' : '#330066');
+      hullG.addColorStop(1,   f ? '#ccc' : '#110022');
+      ctx.shadowColor = f ? '#fff' : '#cc00ff';
+      ctx.shadowBlur  = f ? 25 : 15;
+      ctx.fillStyle   = hullG;
+      ctx.strokeStyle = f ? '#fff' : '#ee88ff';
+      ctx.lineWidth   = 1.8;
+      ctx.fill(); ctx.stroke();
+      ctx.shadowBlur  = 0;
+
+      // Hull centre groove
+      ctx.beginPath();
+      ctx.moveTo(0, -s * 1.1); ctx.lineTo(0, s * 0.65);
+      ctx.strokeStyle = f ? '#aaa' : '#aa00dd';
+      ctx.lineWidth   = s * 0.08; ctx.stroke();
+
+      // Hull armour ribs (horizontal lines)
+      for (let i = 0; i < 4; i++) {
+        const ry = -s * 0.5 + i * s * 0.35;
+        const rw = s * (0.25 - i * 0.01);
+        ctx.beginPath();
+        ctx.moveTo(-rw, ry); ctx.lineTo(rw, ry);
+        ctx.strokeStyle = f ? '#ccc' : `rgba(180,80,255,0.5)`;
+        ctx.lineWidth   = 1.5; ctx.stroke();
+      }
+
+      // ── Nose spike ────────────────────────────────────────────────────────
+      ctx.beginPath();
+      ctx.moveTo(0, -s * 1.5);
+      ctx.lineTo(-s * 0.07, -s * 1.1);
+      ctx.lineTo( s * 0.07, -s * 1.1);
+      ctx.closePath();
+      ctx.fillStyle   = f ? '#fff' : '#ff88ff';
+      ctx.strokeStyle = f ? '#fff' : '#ffffff';
+      ctx.lineWidth   = 1;
+      ctx.fill(); ctx.stroke();
+
+      // Side forward spikes
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.28, -s * 0.6);
+      ctx.lineTo(-s * 0.55, -s * 1.05);
+      ctx.lineTo(-s * 0.38, -s * 0.55);
+      ctx.closePath();
+      ctx.fillStyle   = f ? '#fff' : '#9922cc';
+      ctx.strokeStyle = f ? '#fff' : '#cc66ff';
+      ctx.lineWidth   = 1;
+      ctx.fill(); ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo( s * 0.28, -s * 0.6);
+      ctx.lineTo( s * 0.55, -s * 1.05);
+      ctx.lineTo( s * 0.38, -s * 0.55);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+
+      // ── Core reactor eye (pulsing) ─────────────────────────────────────────
+      const eyeR = s * 0.18;
+      const eyeG = ctx.createRadialGradient(0, -s * 0.1, 0, 0, -s * 0.1, eyeR);
+      eyeG.addColorStop(0,   f ? '#ffffff' : `rgba(255,230,255,${pulse})`);
+      eyeG.addColorStop(0.4, f ? '#ffccff' : `rgba(220,0,255,${pulse * 0.9})`);
+      eyeG.addColorStop(1,   f ? '#cc88ff' : `rgba(80,0,120,0.2)`);
+      ctx.shadowColor = f ? '#fff' : '#ff00ff';
+      ctx.shadowBlur  = f ? 20 : 12 * pulse;
+      ctx.beginPath();
+      ctx.arc(0, -s * 0.1, eyeR, 0, Math.PI * 2);
+      ctx.fillStyle = eyeG;
       ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Inner pupil
+      ctx.beginPath();
+      ctx.arc(0, -s * 0.1, eyeR * 0.38, 0, Math.PI * 2);
+      ctx.fillStyle = f ? '#fff' : '#220033';
+      ctx.fill();
+
+      // ── Engine nozzles (3, bottom) ────────────────────────────────────────
+      const nozzles = [[-s * 0.14, s * 0.65], [0, s * 0.72], [s * 0.14, s * 0.65]];
+      for (const [nx, ny] of nozzles) {
+        ctx.beginPath();
+        ctx.roundRect(nx - s * 0.08, ny - s * 0.02, s * 0.16, s * 0.2, s * 0.04);
+        ctx.fillStyle   = f ? '#ccc' : '#110022';
+        ctx.strokeStyle = f ? '#fff' : '#7700bb';
+        ctx.lineWidth   = 1; ctx.fill(); ctx.stroke();
+        if (!f) {
+          const ng = ctx.createRadialGradient(nx, ny + s * 0.14, 0, nx, ny + s * 0.14, s * 0.14);
+          ng.addColorStop(0,   `rgba(255,180,255,${pulse})`);
+          ng.addColorStop(0.5, `rgba(180,0,255,0.6)`);
+          ng.addColorStop(1,   'rgba(0,0,0,0)');
+          ctx.beginPath();
+          ctx.arc(nx, ny + s * 0.14, s * 0.14, 0, Math.PI * 2);
+          ctx.fillStyle = ng; ctx.fill();
+        }
+      }
+
+      // ── Secondary side guns (left + right on hull) ────────────────────────
+      const sGuns = [[-s * 0.38, s * 0.15], [s * 0.38, s * 0.15]];
+      for (const [gx, gy] of sGuns) {
+        ctx.beginPath();
+        ctx.roundRect(gx - s * 0.08, gy - s * 0.04, s * 0.16, s * 0.28, s * 0.03);
+        ctx.fillStyle   = f ? '#fff' : '#330055';
+        ctx.strokeStyle = f ? '#fff' : '#aa44ee';
+        ctx.lineWidth   = 1; ctx.fill(); ctx.stroke();
+        // barrel tip glow
+        if (!f) {
+          ctx.shadowColor = '#dd00ff';
+          ctx.shadowBlur  = 6 * pulse;
+          ctx.beginPath();
+          ctx.arc(gx, gy - s * 0.04, s * 0.04, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(255,100,255,${pulse})`; ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+      }
 
       ctx.restore();
 
-      // Health bar — drawn in screen space, not rotated
-      const barW   = boss.size * 1.4;
-      const barH   = 8;
-      const barX   = boss.x - barW / 2;
-      const barY   = boss.y + boss.size / 2 + 10;
-      const fillW  = barW * (boss.hp / BOSS_HP);
+      // ── Health bar + BOSS label (screen space) ────────────────────────────
+      const barW  = boss.size * 2.2;
+      const barH  = 10;
+      const barX  = boss.x - barW / 2;
+      const barY  = boss.y + boss.size + 14;
+      const fillW = barW * (boss.hp / BOSS_HP);
+      const hpPct = boss.hp / BOSS_HP;
 
       ctx.save();
-      ctx.fillStyle = '#330033';
-      ctx.fillRect(barX, barY, barW, barH);
-      ctx.fillStyle = boss.hp > 2 ? '#cc00ff' : '#ff4444';
+      // Background track
+      ctx.fillStyle = 'rgba(20,0,30,0.85)';
+      ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+      // Fill — green → yellow → red based on HP
+      const barColor = hpPct > 0.6 ? '#cc00ff' : hpPct > 0.3 ? '#ff8800' : '#ff2222';
+      ctx.fillStyle = barColor;
       ctx.fillRect(barX, barY, fillW, barH);
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth   = 1;
+      // Pulsing inner highlight
+      ctx.fillStyle = `rgba(255,200,255,${0.25 * pulse})`;
+      ctx.fillRect(barX, barY, fillW, barH * 0.45);
+      // Border
+      ctx.strokeStyle = '#ee88ff';
+      ctx.lineWidth   = 1.2;
       ctx.strokeRect(barX, barY, barW, barH);
-
-      // "BOSS" label
-      ctx.font      = 'bold 11px Arial';
+      // HP segment ticks
+      for (let i = 1; i < BOSS_HP; i++) {
+        const tx = barX + barW * (i / BOSS_HP);
+        ctx.beginPath(); ctx.moveTo(tx, barY); ctx.lineTo(tx, barY + barH);
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.lineWidth   = 1; ctx.stroke();
+      }
+      // BOSS label with shadow
+      ctx.font      = 'bold 13px Arial';
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText('BOSS', boss.x, barY - 3);
+      ctx.fillStyle = 'rgba(0,0,0,0.8)';
+      ctx.fillText('⚠ BOSS ⚠', boss.x + 1, barY - 4);
+      ctx.fillStyle = '#ff88ff';
+      ctx.fillText('⚠ BOSS ⚠', boss.x, barY - 5);
       ctx.restore();
     }
 
@@ -1065,17 +2501,251 @@
     function drawShip() {
       // Flicker every 6 frames while invincible
       if (ship.invincible > 0 && Math.floor(ship.invincible / 6) % 2 === 0) return;
-      const { x, y, width: w, height: h } = ship;
+      const { x, y } = ship;
+
+      ctx.save();
+      ctx.translate(x, y);
+
+      const S = 1.15; // overall scale factor
+
+      // ── Engine glow (drawn first, behind hull) ───────────────────────────
+      const engineGlow = ctx.createRadialGradient(0, 22*S, 0, 0, 22*S, 18*S);
+      engineGlow.addColorStop(0,   'rgba(80,180,255,0.85)');
+      engineGlow.addColorStop(0.4, 'rgba(40,100,255,0.45)');
+      engineGlow.addColorStop(1,   'rgba(0,0,80,0)');
       ctx.beginPath();
-      ctx.moveTo(x,         y - h / 2);
-      ctx.lineTo(x - w / 2, y + h / 2);
-      ctx.lineTo(x + w / 2, y + h / 2);
-      ctx.closePath();
-      ctx.fillStyle   = '#00e5ff';
+      ctx.ellipse(0, 22*S, 12*S, 10*S, 0, 0, Math.PI * 2);
+      ctx.fillStyle = engineGlow;
       ctx.fill();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth   = 1.5;
+
+      // ── Left swept wing ──────────────────────────────────────────────────
+      ctx.beginPath();
+      ctx.moveTo(-6*S,  -18*S);   // inner top (near spine)
+      ctx.lineTo(-38*S, -28*S);   // outer tip (top)
+      ctx.lineTo(-46*S,  -8*S);   // outer leading edge
+      ctx.lineTo(-44*S,  14*S);   // outer mid
+      ctx.lineTo(-32*S,  22*S);   // outer bottom
+      ctx.lineTo(-10*S,  16*S);   // inner bottom
+      ctx.closePath();
+      const lgWing = ctx.createLinearGradient(-46*S, -28*S, -6*S, 16*S);
+      lgWing.addColorStop(0,   '#4488ee');
+      lgWing.addColorStop(0.3, '#2255bb');
+      lgWing.addColorStop(0.7, '#112277');
+      lgWing.addColorStop(1,   '#0a1040');
+      ctx.fillStyle   = lgWing;
+      ctx.strokeStyle = '#6699ff';
+      ctx.lineWidth   = 1.2;
+      ctx.fill();
       ctx.stroke();
+
+      // Wing edge highlight
+      ctx.beginPath();
+      ctx.moveTo(-38*S, -28*S);
+      ctx.lineTo(-46*S,  -8*S);
+      ctx.lineTo(-44*S,  14*S);
+      ctx.strokeStyle = 'rgba(120,180,255,0.7)';
+      ctx.lineWidth   = 2;
+      ctx.stroke();
+
+      // ── Right swept wing (mirror) ─────────────────────────────────────────
+      ctx.beginPath();
+      ctx.moveTo( 6*S,  -18*S);
+      ctx.lineTo( 38*S, -28*S);
+      ctx.lineTo( 46*S,  -8*S);
+      ctx.lineTo( 44*S,  14*S);
+      ctx.lineTo( 32*S,  22*S);
+      ctx.lineTo( 10*S,  16*S);
+      ctx.closePath();
+      const rgWing = ctx.createLinearGradient(6*S, -28*S, 46*S, 16*S);
+      rgWing.addColorStop(0,   '#4488ee');
+      rgWing.addColorStop(0.3, '#2255bb');
+      rgWing.addColorStop(0.7, '#112277');
+      rgWing.addColorStop(1,   '#0a1040');
+      ctx.fillStyle   = rgWing;
+      ctx.strokeStyle = '#6699ff';
+      ctx.lineWidth   = 1.2;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo( 38*S, -28*S);
+      ctx.lineTo( 46*S,  -8*S);
+      ctx.lineTo( 44*S,  14*S);
+      ctx.strokeStyle = 'rgba(120,180,255,0.7)';
+      ctx.lineWidth   = 2;
+      ctx.stroke();
+
+      // ── Left wing cannon pod ──────────────────────────────────────────────
+      ctx.beginPath();
+      ctx.roundRect(-42*S, -2*S, 12*S, 7*S, 3);
+      const lgCannon = ctx.createLinearGradient(-42*S, -2*S, -30*S, 5*S);
+      lgCannon.addColorStop(0, '#223388');
+      lgCannon.addColorStop(1, '#0a1040');
+      ctx.fillStyle   = lgCannon;
+      ctx.strokeStyle = '#4466bb';
+      ctx.lineWidth   = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      // ── Right wing cannon pod ─────────────────────────────────────────────
+      ctx.beginPath();
+      ctx.roundRect(30*S, -2*S, 12*S, 7*S, 3);
+      ctx.fillStyle   = lgCannon;
+      ctx.fill();
+      ctx.stroke();
+
+      // ── Central hull body ─────────────────────────────────────────────────
+      ctx.beginPath();
+      ctx.moveTo(  0,    -26*S);  // nose tip
+      ctx.lineTo( -8*S,  -18*S); // shoulder left
+      ctx.lineTo(-12*S,   -4*S); // hull left upper
+      ctx.lineTo(-14*S,   14*S); // hull left lower
+      ctx.lineTo( -8*S,   24*S); // engine base left
+      ctx.lineTo(  8*S,   24*S); // engine base right
+      ctx.lineTo( 14*S,   14*S); // hull right lower
+      ctx.lineTo( 12*S,   -4*S); // hull right upper
+      ctx.lineTo(  8*S,  -18*S); // shoulder right
+      ctx.closePath();
+      const lgHull = ctx.createLinearGradient(0, -26*S, 0, 24*S);
+      lgHull.addColorStop(0,   '#6699ff');
+      lgHull.addColorStop(0.2, '#3366cc');
+      lgHull.addColorStop(0.6, '#1a3388');
+      lgHull.addColorStop(1,   '#0d1a55');
+      ctx.fillStyle   = lgHull;
+      ctx.strokeStyle = '#88aaff';
+      ctx.lineWidth   = 1.5;
+      ctx.fill();
+      ctx.stroke();
+
+      // Hull centre panel
+      ctx.beginPath();
+      ctx.moveTo(  0,   -18*S);
+      ctx.lineTo( -6*S,  -8*S);
+      ctx.lineTo( -6*S,  10*S);
+      ctx.lineTo(  6*S,  10*S);
+      ctx.lineTo(  6*S,  -8*S);
+      ctx.closePath();
+      ctx.fillStyle   = '#1a2266';
+      ctx.strokeStyle = '#4466aa';
+      ctx.lineWidth   = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      // ── Cockpit canopy ────────────────────────────────────────────────────
+      ctx.beginPath();
+      ctx.ellipse(0, -10*S, 5*S, 9*S, 0, 0, Math.PI * 2);
+      const lgCock = ctx.createRadialGradient(-2*S, -14*S, 1, 0, -10*S, 6*S);
+      lgCock.addColorStop(0,   'rgba(160,210,255,0.9)');
+      lgCock.addColorStop(0.5, 'rgba(60,120,220,0.7)');
+      lgCock.addColorStop(1,   'rgba(10,30,100,0.8)');
+      ctx.fillStyle   = lgCock;
+      ctx.strokeStyle = '#aaccff';
+      ctx.lineWidth   = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      // ── Nose spike / top turret ───────────────────────────────────────────
+      ctx.beginPath();
+      ctx.moveTo( 0,    -26*S);
+      ctx.lineTo(-2.5*S,-16*S);
+      ctx.lineTo( 2.5*S,-16*S);
+      ctx.closePath();
+      ctx.fillStyle   = '#99bbff';
+      ctx.strokeStyle = '#cce0ff';
+      ctx.lineWidth   = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      // Side fin spikes (small forward-swept fins)
+      // Left
+      ctx.beginPath();
+      ctx.moveTo(-8*S,  -18*S);
+      ctx.lineTo(-20*S, -30*S);
+      ctx.lineTo(-14*S, -16*S);
+      ctx.closePath();
+      ctx.fillStyle   = '#4477cc';
+      ctx.strokeStyle = '#88aaee';
+      ctx.lineWidth   = 1;
+      ctx.fill();
+      ctx.stroke();
+      // Right
+      ctx.beginPath();
+      ctx.moveTo( 8*S,  -18*S);
+      ctx.lineTo( 20*S, -30*S);
+      ctx.lineTo( 14*S, -16*S);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // ── Engine nozzles (3 at the bottom) ─────────────────────────────────
+      const nozzlePositions = [[-8*S, 22*S], [0, 23*S], [8*S, 22*S]];
+      for (const [nx, ny] of nozzlePositions) {
+        // Outer casing
+        ctx.beginPath();
+        ctx.roundRect(nx - 4*S, ny - 2*S, 8*S, 8*S, 2);
+        ctx.fillStyle   = '#1a1a2e';
+        ctx.strokeStyle = '#445588';
+        ctx.lineWidth   = 1;
+        ctx.fill();
+        ctx.stroke();
+        // Inner glow
+        const nGlow = ctx.createRadialGradient(nx, ny+3*S, 0, nx, ny+3*S, 4*S);
+        nGlow.addColorStop(0,   'rgba(120,200,255,0.95)');
+        nGlow.addColorStop(0.5, 'rgba(60,100,255,0.6)');
+        nGlow.addColorStop(1,   'rgba(0,0,80,0)');
+        ctx.beginPath();
+        ctx.arc(nx, ny+3*S, 3.5*S, 0, Math.PI * 2);
+        ctx.fillStyle = nGlow;
+        ctx.fill();
+      }
+
+      // ── Side weapon pods (small triple-barrel look) ───────────────────────
+      // Left pod
+      ctx.beginPath();
+      ctx.roundRect(-22*S, 4*S, 8*S, 14*S, 3);
+      ctx.fillStyle   = '#0d1a44';
+      ctx.strokeStyle = '#3355aa';
+      ctx.lineWidth   = 1;
+      ctx.fill();
+      ctx.stroke();
+      // Left pod barrels
+      for (let b = -2; b <= 2; b += 2) {
+        ctx.beginPath();
+        ctx.rect(-19*S + b*S, 2*S, 2*S, 6*S);
+        ctx.fillStyle = '#223366';
+        ctx.fill();
+      }
+      // Right pod
+      ctx.beginPath();
+      ctx.roundRect(14*S, 4*S, 8*S, 14*S, 3);
+      ctx.fillStyle   = '#0d1a44';
+      ctx.strokeStyle = '#3355aa';
+      ctx.lineWidth   = 1;
+      ctx.fill();
+      ctx.stroke();
+      for (let b = -2; b <= 2; b += 2) {
+        ctx.beginPath();
+        ctx.rect(17*S + b*S, 2*S, 2*S, 6*S);
+        ctx.fillStyle = '#223366';
+        ctx.fill();
+      }
+
+      // ── Overall blue metallic sheen overlay ──────────────────────────────
+      ctx.shadowColor = '#2255ff';
+      ctx.shadowBlur  = 12;
+      ctx.beginPath();
+      ctx.moveTo(0, -26*S);
+      ctx.lineTo(-8*S, -18*S);
+      ctx.lineTo(-14*S, 14*S);
+      ctx.lineTo(14*S, 14*S);
+      ctx.lineTo(8*S, -18*S);
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(100,160,255,0.3)';
+      ctx.lineWidth   = 1;
+      ctx.stroke();
+      ctx.shadowBlur  = 0;
+
+      ctx.restore();
     }
 
     function drawBullets() {
@@ -1087,74 +2757,22 @@
 
     function drawEnemies() {
       for (const e of enemies) {
-        ctx.save();
-        ctx.translate(e.x, e.y);
-        ctx.rotate(e.angle);
-        const r = e.size / 2;
-
-        ctx.shadowColor = '#ff4444';
-        ctx.shadowBlur  = 8;
-
-        ctx.fillStyle   = '#e02020';
-        ctx.strokeStyle = '#ff8080';
-        ctx.lineWidth   = 1.8;
-
-        ctx.beginPath();
-
-        if (e.shape === 'triangle') {
-          // Downward-pointing triangle (menacing)
-          ctx.moveTo(0,  -r);
-          ctx.lineTo(-r,  r);
-          ctx.lineTo( r,  r);
-          ctx.closePath();
-
-        } else if (e.shape === 'diamond') {
-          ctx.moveTo(0,  -r);
-          ctx.lineTo( r,  0);
-          ctx.lineTo(0,   r);
-          ctx.lineTo(-r,  0);
-          ctx.closePath();
-
-        } else if (e.shape === 'hexagon') {
-          for (let i = 0; i < 6; i++) {
-            const a = (Math.PI / 3) * i - Math.PI / 6;
-            i === 0
-              ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r)
-              : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-          }
-          ctx.closePath();
-
-        } else if (e.shape === 'cross') {
-          const t = r * 0.38; // arm thickness
-          ctx.moveTo(-t, -r); ctx.lineTo( t, -r);
-          ctx.lineTo( t, -t); ctx.lineTo( r, -t);
-          ctx.lineTo( r,  t); ctx.lineTo( t,  t);
-          ctx.lineTo( t,  r); ctx.lineTo(-t,  r);
-          ctx.lineTo(-t,  t); ctx.lineTo(-r,  t);
-          ctx.lineTo(-r, -t); ctx.lineTo(-t, -t);
-          ctx.closePath();
-
-        } else {
-          // circle
-          ctx.arc(0, 0, r, 0, Math.PI * 2);
-        }
-
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
+        drawEnemyShipByType(e, 0);
       }
     }
 
     function draw() {
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Background + stars drawn together (includes deep space gradient + nebula)
       drawStars();
       drawEnergyWaves();
       drawParticles();
       drawEnemies();
+      drawSmallEnemies();
+      drawMeteors();
       drawBoss();
       drawPowerups();
       drawBullets();
+      drawEnemyBullets();
       if (!gameOver) drawShip();
       drawBossWarning();
       drawScorePopups();
@@ -1162,6 +2780,7 @@
       drawLives();
       drawRapidFireIndicator();
       if (gameOver) drawGameOver();
+      drawPauseOverlay();
     }
 
     // ─── Game loop ────────────────────────────────────────────────────────────

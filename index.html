@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Space Shooter</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background-color: #0a0a0a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+    h1 {
+      color: #ffffff;
+      font-size: 2.5rem;
+      margin-bottom: 20px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+    canvas {
+      display: block;
+      background-color: #000000;
+    }
+  </style>
+</head>
+<body>
+  <h1>Space Shooter</h1>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx    = canvas.getContext('2d');
+
+    // ─── Starfield ────────────────────────────────────────────────────────────
+    const NUM_STARS = 160;
+    const stars = [];
+    for (let i = 0; i < NUM_STARS; i++) {
+      stars.push({
+        x:            Math.random() * canvas.width,
+        y:            Math.random() * canvas.height,
+        radius:       Math.random() * 1.5 + 0.3,
+        speed:        Math.random() * 1.2 + 0.2,
+        opacity:      Math.random() * 0.6 + 0.4,
+        twinkleOffset: Math.random() * Math.PI * 2
+      });
+    }
+
+    function updateStars() {
+      for (const star of stars) {
+        star.y += star.speed;
+        if (star.y > canvas.height) {
+          star.y = 0;
+          star.x = Math.random() * canvas.width;
+        }
+      }
+    }
+
+    function drawStars() {
+      const time = Date.now() / 1000;
+      for (const star of stars) {
+        const twinkle = 0.5 + 0.5 * Math.sin(time * 2.5 + star.twinkleOffset);
+        const alpha   = star.opacity * (0.6 + 0.4 * twinkle);
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+        ctx.fill();
+      }
+    }
+
+    // ─── Player ship ──────────────────────────────────────────────────────────
+    const ship = {
+      x:          canvas.width / 2,
+      y:          canvas.height - 60,
+      width:      40,
+      height:     50,
+      speed:      5,
+      invincible: 0   // frames of invincibility after being hit
+    };
+
+    // ─── Input ────────────────────────────────────────────────────────────────
+    const keys = {};
+    document.addEventListener('keydown', (e) => {
+      keys[e.key] = true;
+      if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key)) {
+        e.preventDefault();
+      }
+      // Start BGM on first interaction (browser autoplay policy)
+      if (!bgmPlaying && !gameOver) startBGM();
+    });
+    document.addEventListener('keyup', (e) => { keys[e.key] = false; });
+
+    // ─── Bullets ──────────────────────────────────────────────────────────────
+    const bullets        = [];
+    const SHOOT_COOLDOWN  = 250; // ms base cooldown
+    let   lastShotTime   = 0;
+
+    // ─── Power-up state ───────────────────────────────────────────────────────
+    const powerups            = [];
+    const POWERUP_SPAWN_INTERVAL = 20000; // ms
+    const POWERUP_RADIUS      = 14;
+    const POWERUP_SPEED       = 1.5;
+    const RAPID_FIRE_DURATION = 5000;     // ms
+    let   lastPowerupSpawn    = 0;
+    let   rapidFireUntil      = 0;        // timestamp when rapid fire ends
+
+    function spawnPowerup() {
+      const now = Date.now();
+      if (now - lastPowerupSpawn < POWERUP_SPAWN_INTERVAL) return;
+      lastPowerupSpawn = now;
+      powerups.push({
+        x:      Math.random() * (canvas.width - POWERUP_RADIUS * 4) + POWERUP_RADIUS * 2,
+        y:      -POWERUP_RADIUS,
+        radius: POWERUP_RADIUS,
+        speed:  POWERUP_SPEED,
+        angle:  0   // for rotating inner symbol
+      });
+    }
+
+    function updatePowerups() {
+      const now = Date.now();
+      for (let i = powerups.length - 1; i >= 0; i--) {
+        const p = powerups[i];
+        p.y     += p.speed;
+        p.angle += 0.05;
+
+        // Ship catches power-up (circle overlap)
+        const dx = p.x - ship.x;
+        const dy = p.y - ship.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < p.radius + ship.width / 2) {
+          rapidFireUntil = now + RAPID_FIRE_DURATION;
+          playPowerupSound();
+          powerups.splice(i, 1);
+          continue;
+        }
+
+        // Off-screen — remove silently
+        if (p.y - p.radius > canvas.height) powerups.splice(i, 1);
+      }
+    }
+
+    function drawPowerups() {
+      const now = Date.now();
+      for (const p of powerups) {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+
+        // Pulsing glow
+        const pulse = 0.5 + 0.5 * Math.sin(now / 200);
+        ctx.shadowColor = '#00ff88';
+        ctx.shadowBlur  = 10 + pulse * 10;
+
+        // Outer circle
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
+        ctx.fillStyle   = `rgba(0, ${Math.floor(180 + pulse * 75)}, 80, 0.9)`;
+        ctx.strokeStyle = '#aaffcc';
+        ctx.lineWidth   = 2;
+        ctx.fill();
+        ctx.stroke();
+
+        // Rotating lightning bolt symbol inside
+        ctx.rotate(p.angle);
+        ctx.fillStyle = '#ffffff';
+        ctx.font      = `bold ${p.radius}px Arial`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.shadowBlur = 0;
+        ctx.fillText('⚡', 0, 1);
+
+        ctx.restore();
+      }
+    }
+
+    function drawRapidFireIndicator() {
+      const now       = Date.now();
+      const remaining = rapidFireUntil - now;
+      if (remaining <= 0) return;
+
+      ctx.save();
+      const barW   = 120;
+      const barH   = 10;
+      const barX   = canvas.width / 2 - barW / 2;
+      const barY   = canvas.height - 22;
+      const fillW  = barW * (remaining / RAPID_FIRE_DURATION);
+      const pulse  = 0.6 + 0.4 * Math.sin(now / 120);
+
+      // Background
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+
+      // Fill
+      ctx.fillStyle = `rgba(0, 255, 120, ${pulse})`;
+      ctx.fillRect(barX, barY, fillW, barH);
+
+      // Border
+      ctx.strokeStyle = '#aaffcc';
+      ctx.lineWidth   = 1;
+      ctx.strokeRect(barX, barY, barW, barH);
+
+      // Label
+      ctx.font         = 'bold 12px Arial';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle    = '#ffffff';
+      ctx.fillText('⚡ RAPID FIRE', canvas.width / 2, barY - 10);
+      ctx.restore();
+    }
+
+    function shoot() {
+      const now     = Date.now();
+      const isRapid = now < rapidFireUntil;
+      const cooldown = isRapid ? Math.floor(SHOOT_COOLDOWN / 3) : SHOOT_COOLDOWN;
+      if (now - lastShotTime < cooldown) return;
+      lastShotTime = now;
+      playShootSound();
+      bullets.push({
+        x:      ship.x,
+        y:      ship.y - ship.height / 2,
+        width:  4,
+        height: 12,
+        speed:  8
+      });
+    }
+
+    // ─── Difficulty scaling ───────────────────────────────────────────────────
+    const DIFFICULTY_INTERVAL  = 15000; // ms — speed ramp every 15 seconds
+    const WAVE_SIZE_INTERVAL   = 30000; // ms — +1 enemy per spawn every 30 seconds
+    const MAX_SPEED_MULT       = 3.5;
+    const MAX_ENEMIES_PER_WAVE = 6;     // cap so screen doesn't get absurd
+    let   difficultyLevel      = 0;
+    let   speedMultiplier      = 1.0;
+    let   spawnInterval        = 1000;
+    let   enemiesPerWave       = 1;     // grows by 1 every 30 seconds
+    let   gameStartTime        = Date.now();
+
+    function updateDifficulty() {
+      const elapsed = Date.now() - gameStartTime;
+
+      // Speed ramp every 15 s
+      const level = Math.floor(elapsed / DIFFICULTY_INTERVAL);
+      if (level > difficultyLevel) {
+        difficultyLevel = level;
+        speedMultiplier = Math.min(1.0 + level * 0.3, MAX_SPEED_MULT);
+        spawnInterval   = Math.max(300, 1000 - level * 80);
+      }
+
+      // Wave size ramp every 30 s
+      const waveLevel = Math.floor(elapsed / WAVE_SIZE_INTERVAL);
+      enemiesPerWave  = Math.min(1 + waveLevel, MAX_ENEMIES_PER_WAVE);
+    }
+
+    // ─── Enemies ──────────────────────────────────────────────────────────────
+    const enemies             = [];
+    const ENEMY_SIZE          = 30;
+    const ENEMY_BASE_SPEED    = 1.8;
+    const ENEMY_SPAWN_INTERVAL = 1000; // ms
+    let   lastEnemySpawn      = 0;
+
+    const ENEMY_SHAPES = ['triangle', 'diamond', 'hexagon', 'cross', 'circle'];
+
+    function spawnEnemy() {
+      const now = Date.now();
+      if (now - lastEnemySpawn < spawnInterval) return;
+      lastEnemySpawn = now;
+
+      for (let w = 0; w < enemiesPerWave; w++) {
+        const shape = ENEMY_SHAPES[Math.floor(Math.random() * ENEMY_SHAPES.length)];
+        // Stagger X positions so enemies in the same wave don't all overlap
+        const margin = ENEMY_SIZE * 2;
+        enemies.push({
+          x:     margin + Math.random() * (canvas.width - margin * 2),
+          y:     -ENEMY_SIZE - w * (ENEMY_SIZE * 1.5), // slight vertical offset per enemy
+          size:  ENEMY_SIZE,
+          speed: (ENEMY_BASE_SPEED + Math.random() * 0.8) * speedMultiplier,
+          shape,
+          angle: 0,
+          spin:  (Math.random() - 0.5) * 0.04
+        });
+      }
+    }
+
+    // ─── Boss ─────────────────────────────────────────────────────────────────
+    const BOSS_SIZE          = 80;
+    const BOSS_HP            = 5;
+    const BOSS_SPEED         = 1.0;
+    const BOSS_SPAWN_INTERVAL = 30000; // 30 seconds
+    let   boss               = null;
+    let   lastBossSpawn      = -BOSS_SPAWN_INTERVAL; // spawn first boss at 30s
+    let   bossHitFlash       = 0; // frames to flash white on hit
+
+    function spawnBoss() {
+      const now = Date.now();
+      if (now - lastBossSpawn < BOSS_SPAWN_INTERVAL) return;
+      if (boss) return; // only one boss at a time
+      lastBossSpawn = now;
+      boss = {
+        x:          canvas.width / 2,
+        y:          -BOSS_SIZE,
+        size:       BOSS_SIZE,
+        speed:      BOSS_SPEED * speedMultiplier,
+        hp:         BOSS_HP,
+        angle:      0,
+        spin:       0.012,
+        driftDir:   1,
+        driftSpeed: 1.2 * speedMultiplier
+      };
+    }
+
+    function spawnBossParticles(x, y) {
+      // More dramatic purple/pink explosion for boss
+      const count = 36;
+      for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 / count) * i + Math.random() * 0.3;
+        const speed = Math.random() * 5 + 2;
+        particles.push({
+          x, y,
+          vx:     Math.cos(angle) * speed,
+          vy:     Math.sin(angle) * speed,
+          life:   1.0,
+          decay:  Math.random() * 0.025 + 0.015,
+          radius: Math.random() * 5 + 2,
+          hue:    Math.floor(Math.random() * 60) + 270  // purple → magenta
+        });
+      }
+    }
+    const particles = [];
+
+    function spawnParticles(x, y) {
+      const count = 18;
+      for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 / count) * i + Math.random() * 0.4;
+        const speed = Math.random() * 3 + 1.5;
+        particles.push({
+          x, y,
+          vx:     Math.cos(angle) * speed,
+          vy:     Math.sin(angle) * speed,
+          life:   1.0,
+          decay:  Math.random() * 0.04 + 0.03,
+          radius: Math.random() * 3 + 1,
+          hue:    Math.floor(Math.random() * 50)   // warm: yellow → red
+        });
+      }
+    }
+
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x  += p.vx;
+        p.y  += p.vy;
+        p.vy += 0.05; // gravity
+        p.life -= p.decay;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+    }
+
+    function drawParticles() {
+      for (const p of particles) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${p.hue},100%,60%,${p.life})`;
+        ctx.fill();
+      }
+    }
+
+    // ─── Energy waves (boss death shockwave) ──────────────────────────────────
+    const energyWaves = [];
+
+    function spawnEnergyWave(x, y) {
+      energyWaves.push({
+        x, y,
+        radius:    0,
+        maxRadius: 280,   // how far it expands before disappearing
+        speed:     6,     // px per frame
+        life:      1.0,   // opacity
+        hit:       false  // has it already hit the ship this wave
+      });
+    }
+
+    function updateEnergyWaves() {
+      for (let i = energyWaves.length - 1; i >= 0; i--) {
+        const w = energyWaves[i];
+        w.radius += w.speed;
+        w.life    = 1 - w.radius / w.maxRadius;
+
+        // Check if the wave ring passes through the ship
+        if (!w.hit && ship.invincible === 0) {
+          const dx   = ship.x - w.x;
+          const dy   = ship.y - w.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          // The ring has thickness — check if ship is inside the band
+          if (dist > w.radius - 20 && dist < w.radius + 20) {
+            w.hit = true;
+            loseLife();
+            playEnergyWaveHitSound();
+          }
+        }
+
+        if (w.radius >= w.maxRadius) energyWaves.splice(i, 1);
+      }
+    }
+
+    function drawEnergyWaves() {
+      for (const w of energyWaves) {
+        ctx.save();
+        // Outer bright ring
+        ctx.beginPath();
+        ctx.arc(w.x, w.y, w.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(200, 80, 255, ${w.life})`;
+        ctx.lineWidth   = 8 * w.life;
+        ctx.shadowColor = '#cc00ff';
+        ctx.shadowBlur  = 20 * w.life;
+        ctx.stroke();
+        // Inner thinner ring
+        ctx.beginPath();
+        ctx.arc(w.x, w.y, Math.max(0, w.radius - 12), 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 180, 255, ${w.life * 0.5})`;
+        ctx.lineWidth   = 3 * w.life;
+        ctx.shadowBlur  = 0;
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    let audioCtx  = null;
+    let bgmPlaying = false;
+
+    function ensureAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    // ─── BGM ──────────────────────────────────────────────────────────────────
+    // Procedural synth BGM: bass + melody + kick drum, all looped via the
+    // AudioContext scheduler. Starts on first user interaction.
+
+    const BGM_BPM    = 138;
+    const BGM_BEAT   = 60 / BGM_BPM;       // seconds per beat
+    const BGM_STEP   = BGM_BEAT / 2;       // 8th-note resolution
+    let   bgmNextTime = 0;
+    let   bgmStep     = 0;
+    let   bgmMaster   = null;              // master gain node
+
+    // Note frequencies (Hz)
+    const NOTE = {
+      C3:130.81, D3:146.83, E3:164.81, F3:174.61, G3:196.00,
+      A3:220.00, B3:246.94, C4:261.63, D4:293.66, E4:329.63,
+      F4:349.23, G4:392.00, A4:440.00, B4:493.88,
+      C5:523.25, D5:587.33, E5:659.25, G5:783.99, A5:880.00
+    };
+
+    // 16-step bass pattern (index = step 0-15, value = note or null)
+    const BASS_PATTERN = [
+      'C3','C3', null,'G3',  'A3','A3', null,'G3',
+      'F3','F3', null,'C3',  'G3','G3', null,null
+    ];
+
+    // 16-step melody pattern
+    const MELODY_PATTERN = [
+      'E5', null,'G5','E5',  null,'A5',null,'G5',
+      'E5', null,'D5',null,  'C5',null,'E5',null
+    ];
+
+    // 16-step kick pattern (true = hit)
+    const KICK_PATTERN = [
+      true,false,false,false, true,false,false,false,
+      true,false,false,false, true,false,true, false
+    ];
+
+    // 16-step hihat pattern
+    const HIHAT_PATTERN = [
+      false,false,true,false, false,false,true,false,
+      false,false,true,false, false,false,true,false
+    ];
+
+    function bgmNote(freq, startTime, duration, type, gainVal, detune) {
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(bgmMaster);
+      osc.type = type;
+      osc.frequency.value = freq;
+      if (detune) osc.detune.value = detune;
+      gain.gain.setValueAtTime(gainVal, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+      osc.start(startTime);
+      osc.stop(startTime + duration + 0.02);
+    }
+
+    function bgmKick(startTime) {
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(bgmMaster);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(150, startTime);
+      osc.frequency.exponentialRampToValueAtTime(40, startTime + 0.08);
+      gain.gain.setValueAtTime(0.9, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.18);
+      osc.start(startTime);
+      osc.stop(startTime + 0.2);
+    }
+
+    function bgmHihat(startTime) {
+      const bufSize = audioCtx.sampleRate * 0.05;
+      const buf     = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+      const data    = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+      const src    = audioCtx.createBufferSource();
+      src.buffer   = buf;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type            = 'highpass';
+      filter.frequency.value = 8000;
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.18, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.05);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(bgmMaster);
+      src.start(startTime);
+      src.stop(startTime + 0.06);
+    }
+
+    // Schedule ~0.25s ahead; called every animation frame
+    function scheduleBGM() {
+      if (!bgmPlaying || !bgmMaster) return;
+      const LOOK_AHEAD = 0.25;
+      while (bgmNextTime < audioCtx.currentTime + LOOK_AHEAD) {
+        const step = bgmStep % 16;
+        const t    = bgmNextTime;
+
+        // Bass
+        if (BASS_PATTERN[step]) {
+          bgmNote(NOTE[BASS_PATTERN[step]], t, BGM_STEP * 0.9,
+                  'sawtooth', 0.18, 0);
+        }
+
+        // Melody (plays every other bar — steps 0-15 in even bars)
+        const bar = Math.floor(bgmStep / 16) % 2;
+        if (bar === 0 && MELODY_PATTERN[step]) {
+          bgmNote(NOTE[MELODY_PATTERN[step]], t, BGM_STEP * 0.75,
+                  'square', 0.07, -8);
+          // slight harmony a 5th up
+          bgmNote(NOTE[MELODY_PATTERN[step]] * 1.5, t, BGM_STEP * 0.5,
+                  'square', 0.03, 12);
+        }
+
+        // Drums
+        if (KICK_PATTERN[step])  bgmKick(t);
+        if (HIHAT_PATTERN[step]) bgmHihat(t);
+
+        bgmNextTime += BGM_STEP;
+        bgmStep++;
+      }
+    }
+
+    function startBGM() {
+      if (bgmPlaying) return;
+      ensureAudio();
+      bgmMaster = audioCtx.createGain();
+      bgmMaster.gain.value = 0.38;
+      bgmMaster.connect(audioCtx.destination);
+      bgmNextTime = audioCtx.currentTime + 0.1;
+      bgmStep     = 0;
+      bgmPlaying  = true;
+    }
+
+    function stopBGM() {
+      bgmPlaying = false;
+      if (bgmMaster) {
+        bgmMaster.gain.setValueAtTime(bgmMaster.gain.value, audioCtx.currentTime);
+        bgmMaster.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+        bgmMaster = null;
+      }
+    }
+
+    function playMilestoneBeep() {
+      ensureAudio();
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1320, audioCtx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.35);
+    }
+
+    // Short laser "pew" when a bullet is fired
+    function playShootSound() {
+      ensureAudio();
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = 'square';
+      // Pitch sweeps quickly downward — classic laser blip
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(220, audioCtx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    // Crunchy explosion burst when a bullet hits an enemy
+    function playHitSound() {
+      ensureAudio();
+      // White-noise-style burst using a buffer of random samples
+      const bufferSize = audioCtx.sampleRate * 0.12;
+      const buffer     = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data       = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+
+      // Band-pass filter to give it a punchy mid-range crack
+      const filter = audioCtx.createBiquadFilter();
+      filter.type            = 'bandpass';
+      filter.frequency.value = 800;
+      filter.Q.value         = 0.8;
+
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.55, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      source.start(audioCtx.currentTime);
+      source.stop(audioCtx.currentTime + 0.12);
+    }
+
+    // Bright rising arpeggio for power-up collect
+    function playPowerupSound() {
+      ensureAudio();
+      const freqs = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
+      freqs.forEach((freq, i) => {
+        const osc  = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const t = audioCtx.currentTime + i * 0.07;
+        gain.gain.setValueAtTime(0.25, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+        osc.start(t);
+        osc.stop(t + 0.22);
+      });
+    }
+
+    // Deep boom when energy wave hits the ship
+    function playEnergyWaveHitSound() {
+      ensureAudio();
+      // Low sine thud
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(120, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.4);
+      gain.gain.setValueAtTime(0.7, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.55);
+      // White noise layer for crunch
+      const bufSize = audioCtx.sampleRate * 0.3;
+      const buf     = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+      const data    = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+      const src    = audioCtx.createBufferSource();
+      src.buffer   = buf;
+      const filt   = audioCtx.createBiquadFilter();
+      filt.type            = 'lowpass';
+      filt.frequency.value = 600;
+      const ng = audioCtx.createGain();
+      ng.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      ng.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+      src.connect(filt); filt.connect(ng); ng.connect(audioCtx.destination);
+      src.start(audioCtx.currentTime);
+      src.stop(audioCtx.currentTime + 0.35);
+    }
+
+    // ─── Scoring ──────────────────────────────────────────────────────────────
+    let score         = 0;
+    let lastMilestone = 0;
+    const scorePopups = [];
+
+    function addScore(points, x, y) {
+      score += points;
+      scorePopups.push({ x, y, points, life: 1.0 });
+      const milestone = Math.floor(score / 100);
+      if (milestone > lastMilestone) {
+        lastMilestone = milestone;
+        playMilestoneBeep();
+      }
+    }
+
+    function updateScorePopups() {
+      for (let i = scorePopups.length - 1; i >= 0; i--) {
+        scorePopups[i].y    -= 0.8;
+        scorePopups[i].life -= 0.025;
+        if (scorePopups[i].life <= 0) scorePopups.splice(i, 1);
+      }
+    }
+
+    function drawScorePopups() {
+      ctx.save();
+      ctx.font      = 'bold 16px Arial';
+      ctx.textAlign = 'center';
+      for (const p of scorePopups) {
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle   = typeof p.points === 'string' && p.points.startsWith('+')
+                          ? '#ff88aa' : '#ffe600';
+        ctx.fillText(
+          typeof p.points === 'string' && p.points.startsWith('+')
+            ? p.points
+            : `+${p.points}`,
+          p.x, p.y
+        );
+      }
+      ctx.restore();
+    }
+
+    function drawScore() {
+      ctx.save();
+      ctx.font      = 'bold 20px Arial';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillText(`SCORE: ${score}`, 16, 36);
+      ctx.fillStyle = '#f0f040';
+      ctx.fillText(`SCORE: ${score}`, 15, 35);
+      // Difficulty level indicator
+      const lvlText = `LVL ${difficultyLevel + 1}`;
+      ctx.font      = 'bold 14px Arial';
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillText(lvlText, 16, 58);
+      ctx.fillStyle = speedMultiplier >= MAX_SPEED_MULT ? '#ff4444' : '#aaffaa';
+      ctx.fillText(lvlText, 15, 57);
+      ctx.restore();
+    }
+
+    // ─── Game state ───────────────────────────────────────────────────────────
+    const MAX_LIVES = 3;
+    let lives    = MAX_LIVES;
+    let gameOver = false;
+
+    function resetGame() {
+      score         = 0;
+      lastMilestone = 0;
+      lives         = MAX_LIVES;
+      gameOver      = false;
+      ship.x        = canvas.width / 2;
+      ship.y        = canvas.height - 60;
+      ship.invincible     = 0;
+      bullets.length      = 0;
+      enemies.length      = 0;
+      particles.length    = 0;
+      scorePopups.length  = 0;
+      lastEnemySpawn      = 0;
+      lastShotTime        = 0;
+      boss                = null;
+      lastBossSpawn       = -BOSS_SPAWN_INTERVAL;
+      bossHitFlash        = 0;
+      difficultyLevel     = 0;
+      speedMultiplier     = 1.0;
+      spawnInterval       = 1000;
+      enemiesPerWave      = 1;
+      gameStartTime       = Date.now();
+      powerups.length     = 0;
+      lastPowerupSpawn    = 0;
+      rapidFireUntil      = 0;
+      energyWaves.length  = 0;
+    }
+
+    // Listen for R key to restart
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'r' || e.key === 'R') {
+        if (gameOver) { resetGame(); startBGM(); }
+      }
+    });
+
+    function loseLife() {
+      lives--;
+      ship.invincible = 120;
+      if (lives <= 0) {
+        lives    = 0;
+        gameOver = true;
+        stopBGM();
+      }
+    }
+    // ─── Update ───────────────────────────────────────────────────────────────
+    function update() {
+      if (gameOver) return;
+
+      updateDifficulty();
+      if (ship.invincible > 0) ship.invincible--;
+
+      // Ship movement
+      if (keys['ArrowLeft'])  ship.x -= ship.speed;
+      if (keys['ArrowRight']) ship.x += ship.speed;
+      if (keys[' '])          shoot();
+
+      // Clamp ship to canvas
+      const hw = ship.width / 2;
+      if (ship.x - hw < 0)            ship.x = hw;
+      if (ship.x + hw > canvas.width) ship.x = canvas.width - hw;
+
+      // Bullets
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        bullets[i].y -= bullets[i].speed;
+        if (bullets[i].y + bullets[i].height < 0) bullets.splice(i, 1);
+      }
+
+      // Normal enemies
+      spawnEnemy();
+      spawnPowerup();
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        enemies[i].y     += enemies[i].speed;
+        enemies[i].angle += enemies[i].spin;
+
+        // Enemy hits the ship
+        if (ship.invincible === 0) {
+          const e  = enemies[i];
+          const er = e.size / 2;
+          const sx = ship.x, sy = ship.y;
+          const sh = ship.height / 2, sw = ship.width / 2;
+          if (e.x + er > sx - sw && e.x - er < sx + sw &&
+              e.y + er > sy - sh && e.y - er < sy + sh) {
+            spawnParticles(e.x, e.y);
+            enemies.splice(i, 1);
+            loseLife();
+            continue;
+          }
+        }
+
+        if (enemies[i] && enemies[i].y - enemies[i].size > canvas.height) {
+          enemies.splice(i, 1);
+        }
+      }
+
+      // Boss
+      spawnBoss();
+      if (boss) {
+        boss.y     += boss.speed;
+        boss.angle += boss.spin;
+        boss.x     += boss.driftSpeed * boss.driftDir;
+        const bossR = boss.size / 2;
+        if (boss.x + bossR > canvas.width) boss.driftDir = -1;
+        if (boss.x - bossR < 0)            boss.driftDir =  1;
+        if (bossHitFlash > 0) bossHitFlash--;
+
+        // Boss hits the ship
+        if (ship.invincible === 0) {
+          const sx = ship.x, sy = ship.y;
+          const sh = ship.height / 2, sw = ship.width / 2;
+          if (boss.x + bossR > sx - sw && boss.x - bossR < sx + sw &&
+              boss.y + bossR > sy - sh && boss.y - bossR < sy + sh) {
+            spawnParticles(sx, sy);
+            loseLife();
+          }
+        }
+
+        if (boss.y - bossR > canvas.height) boss = null;
+      }
+
+      if (gameOver) return;
+
+      // Bullet ↔ normal enemy collision
+      for (let bi = bullets.length - 1; bi >= 0; bi--) {
+        const b = bullets[bi];
+        let hit = false;
+        for (let ei = enemies.length - 1; ei >= 0; ei--) {
+          const e = enemies[ei];
+          const r = e.size / 2;
+          if (b.x > e.x - r && b.x < e.x + r &&
+              b.y < e.y + r && b.y + b.height > e.y - r) {
+            spawnParticles(e.x, e.y);
+            addScore(10, e.x, e.y - r);
+            enemies.splice(ei, 1);
+            playHitSound();
+            hit = true;
+            break;
+          }
+        }
+        if (hit) { bullets.splice(bi, 1); continue; }
+
+        // Bullet ↔ boss collision
+        if (boss) {
+          const br = boss.size / 2;
+          if (b.x > boss.x - br && b.x < boss.x + br &&
+              b.y < boss.y + br && b.y + b.height > boss.y - br) {
+            boss.hp--;
+            bossHitFlash = 6;
+            spawnParticles(b.x, b.y);
+            playHitSound();
+            bullets.splice(bi, 1);
+            if (boss.hp <= 0) {
+              spawnBossParticles(boss.x, boss.y);
+              spawnEnergyWave(boss.x, boss.y);
+              addScore(50, boss.x, boss.y - br);
+              // Reward player with an extra life (capped at 5)
+              if (lives < 5) {
+                lives++;
+                scorePopups.push({ x: boss.x, y: boss.y - br - 20, points: '+1 ♥', life: 1.0 });
+              }
+              boss = null;
+            }
+          }
+        }
+      }
+
+      updateParticles();
+      updateScorePopups();
+      updatePowerups();
+      updateEnergyWaves();
+      updateStars();
+    }
+
+    // ─── Draw ─────────────────────────────────────────────────────────────────
+    function drawLives() {
+      ctx.save();
+      ctx.font      = 'bold 20px Arial';
+      ctx.textAlign = 'right';
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillText(`LIVES: ${'\u2665'.repeat(lives)}`, canvas.width - 14, 36);
+      // Foreground — red hearts
+      ctx.fillStyle = '#ff4444';
+      ctx.fillText(`LIVES: ${'\u2665'.repeat(lives)}`, canvas.width - 15, 35);
+      ctx.restore();
+    }
+
+    function drawGameOver() {
+      ctx.save();
+      // Semi-transparent dark overlay
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const cx = canvas.width  / 2;
+      const cy = canvas.height / 2;
+
+      // "GAME OVER" — shadow then fill
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font         = 'bold 72px Arial';
+      ctx.fillStyle    = 'rgba(0,0,0,0.8)';
+      ctx.fillText('GAME OVER', cx + 3, cy - 50 + 3);
+      ctx.fillStyle = '#ff2222';
+      ctx.fillText('GAME OVER', cx, cy - 50);
+
+      // Final score
+      ctx.font      = 'bold 28px Arial';
+      ctx.fillStyle = 'rgba(0,0,0,0.8)';
+      ctx.fillText(`FINAL SCORE: ${score}`, cx + 2, cy + 20 + 2);
+      ctx.fillStyle = '#f0f040';
+      ctx.fillText(`FINAL SCORE: ${score}`, cx, cy + 20);
+
+      // Restart prompt — pulsing alpha
+      const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 400);
+      ctx.font         = 'bold 22px Arial';
+      ctx.globalAlpha  = pulse;
+      ctx.fillStyle    = '#ffffff';
+      ctx.fillText('Press  R  to Restart', cx, cy + 75);
+      ctx.restore();
+    }
+    function drawBoss() {
+      if (!boss) return;
+      ctx.save();
+      ctx.translate(boss.x, boss.y);
+      ctx.rotate(boss.angle);
+      const r = boss.size / 2;
+
+      // Flash white on hit, otherwise purple glow
+      if (bossHitFlash > 0) {
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur  = 30;
+        ctx.fillStyle   = '#ffffff';
+        ctx.strokeStyle = '#cc88ff';
+      } else {
+        ctx.shadowColor = '#cc00ff';
+        ctx.shadowBlur  = 20;
+        ctx.fillStyle   = '#8800cc';
+        ctx.strokeStyle = '#dd88ff';
+      }
+      ctx.lineWidth = 2.5;
+
+      // Eight-pointed star shape for the boss
+      ctx.beginPath();
+      const spikes = 8;
+      const outerR = r;
+      const innerR = r * 0.5;
+      for (let i = 0; i < spikes * 2; i++) {
+        const a    = (Math.PI / spikes) * i - Math.PI / 2;
+        const rad  = i % 2 === 0 ? outerR : innerR;
+        i === 0
+          ? ctx.moveTo(Math.cos(a) * rad, Math.sin(a) * rad)
+          : ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Inner circle core
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
+      ctx.fillStyle = bossHitFlash > 0 ? '#ffccff' : '#ee44ff';
+      ctx.shadowBlur = 10;
+      ctx.fill();
+
+      ctx.restore();
+
+      // Health bar — drawn in screen space, not rotated
+      const barW   = boss.size * 1.4;
+      const barH   = 8;
+      const barX   = boss.x - barW / 2;
+      const barY   = boss.y + boss.size / 2 + 10;
+      const fillW  = barW * (boss.hp / BOSS_HP);
+
+      ctx.save();
+      ctx.fillStyle = '#330033';
+      ctx.fillRect(barX, barY, barW, barH);
+      ctx.fillStyle = boss.hp > 2 ? '#cc00ff' : '#ff4444';
+      ctx.fillRect(barX, barY, fillW, barH);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth   = 1;
+      ctx.strokeRect(barX, barY, barW, barH);
+
+      // "BOSS" label
+      ctx.font      = 'bold 11px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('BOSS', boss.x, barY - 3);
+      ctx.restore();
+    }
+
+    function drawBossWarning() {
+      // Pulsing "BOSS INCOMING" banner shown for 3 seconds after boss spawns
+      if (!boss) return;
+      if (boss.y > 0) return; // only show while boss is still entering
+      ctx.save();
+      const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 150);
+      ctx.globalAlpha  = pulse;
+      ctx.font         = 'bold 28px Arial';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle    = '#ff44ff';
+      ctx.fillText('⚠  BOSS INCOMING  ⚠', canvas.width / 2, canvas.height / 2);
+      ctx.restore();
+    }
+
+    function drawShip() {
+      // Flicker every 6 frames while invincible
+      if (ship.invincible > 0 && Math.floor(ship.invincible / 6) % 2 === 0) return;
+      const { x, y, width: w, height: h } = ship;
+      ctx.beginPath();
+      ctx.moveTo(x,         y - h / 2);
+      ctx.lineTo(x - w / 2, y + h / 2);
+      ctx.lineTo(x + w / 2, y + h / 2);
+      ctx.closePath();
+      ctx.fillStyle   = '#00e5ff';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth   = 1.5;
+      ctx.stroke();
+    }
+
+    function drawBullets() {
+      ctx.fillStyle = '#ffe600';
+      for (const b of bullets) {
+        ctx.fillRect(b.x - b.width / 2, b.y, b.width, b.height);
+      }
+    }
+
+    function drawEnemies() {
+      for (const e of enemies) {
+        ctx.save();
+        ctx.translate(e.x, e.y);
+        ctx.rotate(e.angle);
+        const r = e.size / 2;
+
+        ctx.shadowColor = '#ff4444';
+        ctx.shadowBlur  = 8;
+
+        ctx.fillStyle   = '#e02020';
+        ctx.strokeStyle = '#ff8080';
+        ctx.lineWidth   = 1.8;
+
+        ctx.beginPath();
+
+        if (e.shape === 'triangle') {
+          // Downward-pointing triangle (menacing)
+          ctx.moveTo(0,  -r);
+          ctx.lineTo(-r,  r);
+          ctx.lineTo( r,  r);
+          ctx.closePath();
+
+        } else if (e.shape === 'diamond') {
+          ctx.moveTo(0,  -r);
+          ctx.lineTo( r,  0);
+          ctx.lineTo(0,   r);
+          ctx.lineTo(-r,  0);
+          ctx.closePath();
+
+        } else if (e.shape === 'hexagon') {
+          for (let i = 0; i < 6; i++) {
+            const a = (Math.PI / 3) * i - Math.PI / 6;
+            i === 0
+              ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r)
+              : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+          }
+          ctx.closePath();
+
+        } else if (e.shape === 'cross') {
+          const t = r * 0.38; // arm thickness
+          ctx.moveTo(-t, -r); ctx.lineTo( t, -r);
+          ctx.lineTo( t, -t); ctx.lineTo( r, -t);
+          ctx.lineTo( r,  t); ctx.lineTo( t,  t);
+          ctx.lineTo( t,  r); ctx.lineTo(-t,  r);
+          ctx.lineTo(-t,  t); ctx.lineTo(-r,  t);
+          ctx.lineTo(-r, -t); ctx.lineTo(-t, -t);
+          ctx.closePath();
+
+        } else {
+          // circle
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+        }
+
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      drawStars();
+      drawEnergyWaves();
+      drawParticles();
+      drawEnemies();
+      drawBoss();
+      drawPowerups();
+      drawBullets();
+      if (!gameOver) drawShip();
+      drawBossWarning();
+      drawScorePopups();
+      drawScore();
+      drawLives();
+      drawRapidFireIndicator();
+      if (gameOver) drawGameOver();
+    }
+
+    // ─── Game loop ────────────────────────────────────────────────────────────
+    function gameLoop() {
+      scheduleBGM();
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+  </script>
+</body>
+</html>
